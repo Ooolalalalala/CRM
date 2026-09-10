@@ -11,7 +11,7 @@
   --danger-bg: #fff1f1;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
   --radius: 14px;
-  --max-width: 900px;
+  --max-width: 1100px;
 }
 
 * {
@@ -44,7 +44,10 @@ button {
   display: none !important;
 }
 
-/* Login */
+
+/* =========================================================
+   LOGIN
+   ========================================================= */
 
 .login-screen {
   min-height: 100vh;
@@ -79,7 +82,10 @@ button {
   font-size: 14px;
 }
 
-/* Buttons */
+
+/* =========================================================
+   BUTTONS
+   ========================================================= */
 
 .primary-btn,
 .secondary-btn,
@@ -130,7 +136,10 @@ button {
   background: var(--surface-2);
 }
 
-/* Topbar */
+
+/* =========================================================
+   TOPBAR
+   ========================================================= */
 
 .topbar {
   position: sticky;
@@ -180,7 +189,10 @@ button {
   gap: 4px;
 }
 
-/* Main */
+
+/* =========================================================
+   MAIN
+   ========================================================= */
 
 .main-content {
   max-width: var(--max-width);
@@ -208,7 +220,10 @@ button {
   margin: 0;
 }
 
-/* Contacts */
+
+/* =========================================================
+   CONTACTS
+   ========================================================= */
 
 .contacts-tools {
   display: flex;
@@ -243,7 +258,7 @@ button {
 }
 
 .filter-select {
-  max-width: 240px;
+  max-width: 300px;
 }
 
 .contacts-count {
@@ -267,6 +282,7 @@ button {
   align-items: center;
   gap: 14px;
   transition: 0.15s ease;
+  min-height: 92px;
 }
 
 .contact-list-item:hover {
@@ -275,8 +291,8 @@ button {
 }
 
 .contact-list-photo {
-  width: 52px;
-  height: 52px;
+  width: 58px;
+  height: 58px;
   border-radius: 50%;
   object-fit: cover;
   background: var(--surface-2);
@@ -284,25 +300,27 @@ button {
 }
 
 .contact-list-photo-placeholder {
-  width: 52px;
-  height: 52px;
+  width: 58px;
+  height: 58px;
   border-radius: 50%;
   background: var(--surface-2);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   flex: 0 0 auto;
 }
 
 .contact-list-main {
   min-width: 0;
+  flex: 1;
 }
 
 .contact-list-name {
   font-weight: 700;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
+  font-size: 18px;
 }
 
 .contact-list-meta {
@@ -310,7 +328,36 @@ button {
   font-size: 14px;
 }
 
-/* Contact profile */
+
+/* Телефон + E-Mail справа */
+
+.contact-list-details {
+  margin-left: auto;
+  min-width: 220px;
+  max-width: 360px;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.contact-list-detail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.contact-list-detail-label {
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+
+/* =========================================================
+   CONTACT PROFILE
+   ========================================================= */
 
 .contact-actions {
   display: flex;
@@ -323,6 +370,7 @@ button {
 .contact-action-buttons {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .contact-profile {
@@ -362,6 +410,7 @@ button {
   align-items: center;
   justify-content: center;
   color: var(--muted);
+  font-size: 20px;
 }
 
 .profile-header h1 {
@@ -394,7 +443,10 @@ button {
   font-size: 13px;
 }
 
-/* Sections */
+
+/* =========================================================
+   PROFILE SECTIONS
+   ========================================================= */
 
 .profile-section {
   padding: 24px 28px;
@@ -461,7 +513,10 @@ button {
   line-height: 1.5;
 }
 
-/* Notes */
+
+/* =========================================================
+   NOTES
+   ========================================================= */
 
 .note-item {
   display: grid;
@@ -484,7 +539,10 @@ button {
   text-align: right;
 }
 
-/* Relations */
+
+/* =========================================================
+   RELATIONS
+   ========================================================= */
 
 .relation-item {
   display: grid;
@@ -508,12 +566,15 @@ button {
   font-weight: 600;
 }
 
-/* Photos */
+
+/* =========================================================
+   PHOTOS
+   ========================================================= */
 
 .photo-gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .photo-item {
@@ -531,7 +592,10 @@ button {
   display: block;
 }
 
-/* Family tree */
+
+/* =========================================================
+   FAMILY TREE
+   ========================================================= */
 
 .family-controls {
   margin-bottom: 18px;
@@ -544,26 +608,39 @@ button {
 }
 
 .family-tree {
-  min-height: 500px;
+  min-height: 560px;
   overflow: auto;
   background: var(--surface);
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  padding: 24px;
+  padding: 30px;
+}
+
+.family-tree-canvas {
+  position: relative;
+  min-width: 900px;
+  min-height: 500px;
+}
+
+.family-tree-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
 }
 
 .family-node {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  min-width: 130px;
-  max-width: 180px;
+  position: absolute;
+  width: 170px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 12px;
   text-align: center;
   cursor: pointer;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
 }
 
 .family-node:hover {
@@ -571,19 +648,41 @@ button {
 }
 
 .family-node-photo {
-  width: 64px;
-  height: 64px;
+  width: 68px;
+  height: 68px;
   border-radius: 50%;
   object-fit: cover;
   margin-bottom: 8px;
   background: var(--surface-2);
 }
 
-.family-node-name {
-  font-weight: 700;
+.family-node-placeholder {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  margin: 0 auto 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--muted);
 }
 
-/* Empty state */
+.family-node-name {
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.family-node-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+
+/* =========================================================
+   EMPTY STATE
+   ========================================================= */
 
 .empty-state {
   background: var(--surface);
@@ -594,7 +693,10 @@ button {
   color: var(--muted);
 }
 
-/* Modal */
+
+/* =========================================================
+   MODAL
+   ========================================================= */
 
 .modal {
   position: fixed;
@@ -686,6 +788,60 @@ button {
   resize: vertical;
 }
 
+.form-help {
+  margin-top: 7px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+
+/* =========================================================
+   PROFILE PHOTO FORM
+   ========================================================= */
+
+.form-photo-block {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.form-profile-preview-wrap {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-2);
+  flex: 0 0 auto;
+}
+
+.form-profile-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.form-profile-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--muted);
+  text-align: center;
+  padding: 10px;
+}
+
+.form-photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+
+/* =========================================================
+   DYNAMIC FORM ROWS
+   ========================================================= */
+
 .dynamic-row {
   display: grid;
   grid-template-columns: 160px 1fr 160px 40px;
@@ -721,7 +877,10 @@ button {
   margin-top: 24px;
 }
 
-/* Photo viewer */
+
+/* =========================================================
+   PHOTO VIEWER
+   ========================================================= */
 
 .photo-viewer {
   position: fixed;
@@ -778,7 +937,10 @@ button {
   color: #fff;
 }
 
-/* Sync status */
+
+/* =========================================================
+   SYNC
+   ========================================================= */
 
 .sync-status {
   position: fixed;
@@ -793,21 +955,24 @@ button {
   font-size: 14px;
 }
 
-/* Mobile nav */
+
+/* =========================================================
+   MOBILE NAV
+   ========================================================= */
 
 .mobile-nav {
   display: none;
 }
 
-/* Tablet/mobile */
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
 
 @media (max-width: 700px) {
+
   .desktop-nav {
     display: none;
-  }
-
-  .topbar-actions {
-    gap: 0;
   }
 
   .topbar-inner {
@@ -820,7 +985,7 @@ button {
   }
 
   .page-header {
-    align-items: flex-start;
+    align-items: center;
   }
 
   .page-header h1 {
@@ -835,12 +1000,45 @@ button {
     max-width: none;
   }
 
+  .contact-list-item {
+    gap: 10px;
+    padding: 12px;
+    min-height: 88px;
+  }
+
+  .contact-list-photo,
+  .contact-list-photo-placeholder {
+    width: 52px;
+    height: 52px;
+  }
+
+  .contact-list-name {
+    font-size: 16px;
+  }
+
+  .contact-list-main {
+    max-width: 42%;
+  }
+
+  .contact-list-details {
+    min-width: 0;
+    max-width: 46%;
+    font-size: 12px;
+  }
+
+  .contact-list-detail {
+    font-size: 12px;
+  }
+
+  .contact-list-detail-label {
+    display: none;
+  }
+
   .contact-actions {
     align-items: flex-start;
   }
 
   .contact-action-buttons {
-    flex-wrap: wrap;
     justify-content: flex-end;
   }
 
@@ -913,12 +1111,26 @@ button {
     width: 100%;
   }
 
+  .form-photo-block {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .form-profile-preview-wrap {
+    width: 110px;
+    height: 110px;
+  }
+
   .modal-window {
     width: 100%;
     max-height: 100vh;
     margin: 0;
     border-radius: 0;
     min-height: 100vh;
+  }
+
+  .family-tree {
+    padding: 16px;
   }
 
   .mobile-nav {
@@ -951,10 +1163,5 @@ button {
 
   .sync-status {
     bottom: 78px;
-  }
-
-  .photo-nav {
-    width: 42px;
-    height: 58px;
   }
 }
