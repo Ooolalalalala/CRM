@@ -1,35 +1,38 @@
 /* =========================================================
    PersonalCRM
-   Основная логика приложения
+   Основная логика
    ========================================================= */
 
 let database = null;
 let currentContactId = null;
 let editingContactId = null;
+let formContactId = null;
+
+let pendingProfilePhoto = null;
+let removeProfilePhoto = false;
+let localProfilePreviewUrl = null;
 
 let photoUrls = new Map();
+
 let viewerPhotos = [];
 let viewerPhotoIndex = 0;
 
 
 /* =========================================================
-   ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+   BASIC
    ========================================================= */
 
 function $(id) {
   return document.getElementById(id);
 }
 
-
 function uuid() {
   return crypto.randomUUID();
 }
 
-
 function safe(value) {
   return value == null ? "" : String(value);
 }
-
 
 function escapeHtml(value) {
   return safe(value)
@@ -40,34 +43,152 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-
 function fullName(contact) {
   return [
     contact.lastName,
     contact.firstName,
     contact.middleName
-  ]
-    .filter(Boolean)
-    .join(" ");
+  ].filter(Boolean).join(" ");
 }
-
 
 function shortName(contact) {
   return [
     contact.firstName,
     contact.lastName
-  ]
-    .filter(Boolean)
-    .join(" ");
+  ].filter(Boolean).join(" ");
 }
-
 
 function getContact(id) {
-  return database.contacts.find(
-    contact => contact.id === id
-  );
+  return database?.contacts?.find(c => c.id === id);
 }
 
+function initials(contact) {
+  return (
+    safe(contact.firstName).charAt(0) +
+    safe(contact.lastName).charAt(0)
+  ).toUpperCase() || "?";
+}
+
+
+/* =========================================================
+   ДАТА / ПЕРИОД
+   ========================================================= */
+
+/*
+   Пустая дата считается самой актуальной.
+
+   2019–2024 -> 2024
+   с 2025    -> 2025
+   ~2018     -> 2018
+*/
+function getDateSortValue(value) {
+  const text = safe(value).trim();
+
+  if (!text) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const years = [
+    ...text.matchAll(/\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b/g)
+  ].map(match => Number(match[1]));
+
+  if (!years.length) {
+    return -Infinity;
+  }
+
+  return years[years.length - 1];
+}
+
+
+function sortDatedItems(items = []) {
+  return items
+    .map((item, index) => ({
+      item,
+      index
+    }))
+    .sort((a, b) => {
+      const dateA =
+        getDateSortValue(a.item.date);
+
+      const dateB =
+        getDateSortValue(b.item.date);
+
+      if (dateA !== dateB) {
+        return dateB - dateA;
+      }
+
+      return a.index - b.index;
+    })
+    .map(entry => entry.item);
+}
+
+
+/* =========================================================
+   STANDARD TYPES
+   ========================================================= */
+
+function normalizeType(value) {
+  return safe(value)
+    .trim()
+    .toLowerCase();
+}
+
+
+function standardType(value) {
+  const type = normalizeType(value);
+
+  if (
+    type === "телефон" ||
+    type === "phone" ||
+    type === "telefon" ||
+    type === "мобильный" ||
+    type === "мобильный телефон"
+  ) {
+    return "phone";
+  }
+
+  if (
+    type === "e-mail" ||
+    type === "email" ||
+    type === "электронная почта"
+  ) {
+    return "email";
+  }
+
+  if (
+    type === "адрес" ||
+    type === "address" ||
+    type === "adresse"
+  ) {
+    return "address";
+  }
+
+  if (
+    type === "работа / фирма" ||
+    type === "работа" ||
+    type === "фирма" ||
+    type === "company" ||
+    type === "firma"
+  ) {
+    return "company";
+  }
+
+  return null;
+}
+
+
+function getLatestStandardItem(items, kind) {
+  return sortDatedItems(
+    (items || []).filter(
+      item => standardType(item.type) === kind
+    )
+  )[0] || null;
+}
+
+
+/* =========================================================
+   ВОЗРАСТ
+   ========================================================= */
 
 function calculateAge(contact) {
   if (!contact.birthDate) {
@@ -83,6 +204,10 @@ function calculateAge(contact) {
   const end = contact.deathDate
     ? new Date(contact.deathDate)
     : new Date();
+
+  if (Number.isNaN(end.getTime())) {
+    return "";
+  }
 
   let age =
     end.getFullYear() -
@@ -109,10 +234,7 @@ function calculateAge(contact) {
 function lifeText(contact) {
   const parts = [];
 
-  if (
-    contact.birthDate ||
-    contact.deathDate
-  ) {
+  if (contact.birthDate || contact.deathDate) {
     parts.push(
       `${contact.birthDate || "?"} — ${contact.deathDate || ""}`
     );
@@ -120,10 +242,7 @@ function lifeText(contact) {
 
   const age = calculateAge(contact);
 
-  if (
-    age !== "" &&
-    !contact.deathDate
-  ) {
+  if (age !== "" && !contact.deathDate) {
     parts.push(`${age} лет`);
   }
 
@@ -131,30 +250,32 @@ function lifeText(contact) {
 }
 
 
-function showSync(text) {
-  const el = $("syncStatus");
+/* =========================================================
+   SYNC
+   ========================================================= */
 
-  el.textContent = text;
-  el.classList.remove("hidden");
+function showSync(text) {
+  $("syncStatus").textContent = text;
+  $("syncStatus").classList.remove("hidden");
 }
 
-
-function hideSync(delay = 500) {
+function hideSync(delay = 600) {
   setTimeout(() => {
     $("syncStatus").classList.add("hidden");
   }, delay);
 }
-
 
 async function persistDatabase() {
   showSync("Сохранение...");
 
   try {
     await DriveAPI.saveDatabase(database);
+
     showSync("Сохранено");
-    hideSync(800);
+    hideSync();
   } catch (error) {
     console.error(error);
+
     showSync("Ошибка сохранения");
     alert(error.message);
   }
@@ -162,48 +283,44 @@ async function persistDatabase() {
 
 
 /* =========================================================
-   НАВИГАЦИЯ
+   NAVIGATION
    ========================================================= */
 
 function showPage(pageName) {
-  document
-    .querySelectorAll(".page")
+  document.querySelectorAll(".page")
     .forEach(page =>
       page.classList.remove("active")
     );
 
-  const map = {
+  const pages = {
     contacts: "contactsPage",
     contact: "contactPage",
     family: "familyPage",
     trash: "trashPage"
   };
 
-  $(map[pageName])
+  $(pages[pageName])
     ?.classList.add("active");
 
-  document
-    .querySelectorAll(
-      ".nav-btn, .mobile-nav-btn"
-    )
-    .forEach(button => {
-      button.classList.toggle(
-        "active",
-        button.dataset.page === pageName
-      );
-    });
+  document.querySelectorAll(
+    ".nav-btn, .mobile-nav-btn"
+  ).forEach(button => {
+    button.classList.toggle(
+      "active",
+      button.dataset.page === pageName
+    );
+  });
 
   window.scrollTo(0, 0);
 }
 
 
 /* =========================================================
-   КОНТАКТЫ
+   CONTACT LIST
    ========================================================= */
 
 function renderContacts() {
-  const list =
-    $("contactsList");
+  const list = $("contactsList");
 
   list.innerHTML = "";
 
@@ -237,10 +354,27 @@ function renderContacts() {
       contact.middleName,
       contact.category,
       ...(contact.tags || []),
+
       ...(contact.contactData || [])
-        .map(x => x.value),
+        .flatMap(item => [
+          item.type,
+          item.value,
+          item.date
+        ]),
+
       ...(contact.personalData || [])
-        .map(x => x.value)
+        .flatMap(item => [
+          item.type,
+          item.value,
+          item.date
+        ]),
+
+      ...(contact.customFields || [])
+        .flatMap(item => [
+          item.type,
+          item.value,
+          item.date
+        ])
     ]
       .filter(Boolean)
       .join(" ")
@@ -250,13 +384,15 @@ function renderContacts() {
   });
 
   contacts.sort((a, b) => {
-    const last =
+    const lastname =
       safe(a.lastName).localeCompare(
         safe(b.lastName),
         "ru"
       );
 
-    if (last !== 0) return last;
+    if (lastname !== 0) {
+      return lastname;
+    }
 
     return safe(a.firstName)
       .localeCompare(
@@ -268,11 +404,10 @@ function renderContacts() {
   $("contactsCount").textContent =
     `${contacts.length} контактов`;
 
-  $("emptyContacts")
-    .classList.toggle(
-      "hidden",
-      contacts.length !== 0
-    );
+  $("emptyContacts").classList.toggle(
+    "hidden",
+    contacts.length !== 0
+  );
 
   contacts.forEach(contact => {
     const item =
@@ -286,7 +421,10 @@ function renderContacts() {
       () => openContact(contact.id)
     );
 
-    const photo =
+
+    /* Photo */
+
+    const photoContainer =
       document.createElement("div");
 
     if (contact.profilePhotoId) {
@@ -303,15 +441,18 @@ function renderContacts() {
         contact.profilePhotoId
       );
 
-      photo.appendChild(img);
+      photoContainer.appendChild(img);
 
     } else {
-      photo.className =
+      photoContainer.className =
         "contact-list-photo-placeholder";
 
-      photo.textContent =
+      photoContainer.textContent =
         initials(contact);
     }
+
+
+    /* Name */
 
     const main =
       document.createElement("div");
@@ -326,8 +467,7 @@ function renderContacts() {
       "contact-list-name";
 
     name.textContent =
-      shortName(contact) ||
-      "Без имени";
+      shortName(contact) || "Без имени";
 
     const meta =
       document.createElement("div");
@@ -350,25 +490,67 @@ function renderContacts() {
       meta
     );
 
+
+    /* Phone / Email */
+
+    const details =
+      document.createElement("div");
+
+    details.className =
+      "contact-list-details";
+
+    const phone =
+      getLatestStandardItem(
+        contact.contactData,
+        "phone"
+      );
+
+    const email =
+      getLatestStandardItem(
+        contact.contactData,
+        "email"
+      );
+
+    if (phone?.value) {
+      const row =
+        document.createElement("div");
+
+      row.className =
+        "contact-list-detail";
+
+      row.innerHTML = `
+        <span class="contact-list-detail-label">Тел.</span>
+        ${escapeHtml(phone.value)}
+      `;
+
+      details.appendChild(row);
+    }
+
+    if (email?.value) {
+      const row =
+        document.createElement("div");
+
+      row.className =
+        "contact-list-detail";
+
+      row.innerHTML = `
+        <span class="contact-list-detail-label">E-Mail</span>
+        ${escapeHtml(email.value)}
+      `;
+
+      details.appendChild(row);
+    }
+
     item.append(
-      photo,
-      main
+      photoContainer,
+      main,
+      details
     );
 
     list.appendChild(item);
   });
 
   renderCategoryFilter();
-}
-
-
-function initials(contact) {
-  return (
-    safe(contact.firstName)
-      .charAt(0) +
-    safe(contact.lastName)
-      .charAt(0)
-  ).toUpperCase() || "?";
 }
 
 
@@ -379,17 +561,16 @@ function renderCategoryFilter() {
   const current =
     select.value;
 
-  const categories =
-    [
-      ...new Set(
-        database.contacts
-          .map(c => c.category)
-          .filter(Boolean)
-      )
-    ].sort(
-      (a, b) =>
-        a.localeCompare(b, "ru")
-    );
+  const categories = [
+    ...new Set(
+      database.contacts
+        .map(contact => contact.category)
+        .filter(Boolean)
+    )
+  ].sort(
+    (a, b) =>
+      a.localeCompare(b, "ru")
+  );
 
   select.innerHTML =
     '<option value="">Все категории</option>';
@@ -398,11 +579,8 @@ function renderCategoryFilter() {
     const option =
       document.createElement("option");
 
-    option.value =
-      category;
-
-    option.textContent =
-      category;
+    option.value = category;
+    option.textContent = category;
 
     select.appendChild(option);
   });
@@ -415,23 +593,23 @@ function renderCategoryFilter() {
 
 
 /* =========================================================
-   ПРОСМОТР КОНТАКТА
+   CONTACT VIEW
    ========================================================= */
 
 async function openContact(id) {
   const contact =
     getContact(id);
 
-  if (!contact) return;
+  if (!contact) {
+    return;
+  }
 
-  currentContactId =
-    id;
+  currentContactId = id;
 
   showPage("contact");
 
   $("profileName").textContent =
-    fullName(contact) ||
-    "Без имени";
+    fullName(contact) || "Без имени";
 
   $("profileLife").textContent =
     lifeText(contact);
@@ -441,6 +619,7 @@ async function openContact(id) {
 
   renderTags(contact);
   renderProfilePhoto(contact);
+
   renderBasicInfo(contact);
   renderContactInfo(contact);
   renderPersonalInfo(contact);
@@ -448,7 +627,8 @@ async function openContact(id) {
   renderNotes(contact);
   renderComment(contact);
   renderRelations(contact);
-  renderPhotos(contact);
+
+  await renderPhotos(contact);
 }
 
 
@@ -480,9 +660,14 @@ function renderProfilePhoto(contact) {
 
   if (!contact.profilePhotoId) {
     img.classList.add("hidden");
-    placeholder.classList.remove("hidden");
+
+    placeholder.classList.remove(
+      "hidden"
+    );
+
     placeholder.textContent =
       initials(contact);
+
     return;
   }
 
@@ -496,39 +681,34 @@ function renderProfilePhoto(contact) {
 }
 
 
-function renderBasicInfo(contact) {
-  const rows = [
-    ["Имя", contact.firstName],
-    ["Фамилия", contact.lastName],
-    ["Отчество / другие имена", contact.middleName],
-    ["Пол", genderLabel(contact.gender)],
-    ["Дата рождения", contact.birthDate],
-    ["Дата смерти", contact.deathDate],
-    ["Место рождения", contact.birthPlace],
-    ["Место смерти", contact.deathPlace]
-  ];
+function genderLabel(value) {
+  const labels = {
+    male: "Мужской",
+    female: "Женский",
+    unknown: "Неизвестно"
+  };
 
-  renderSimpleRows(
-    $("basicInfo"),
-    rows
-  );
+  return labels[value] || "";
 }
 
 
-function genderLabel(value) {
-  if (value === "male") {
-    return "Мужской";
-  }
-
-  if (value === "female") {
-    return "Женский";
-  }
-
-  if (value === "unknown") {
-    return "Неизвестно";
-  }
-
-  return "";
+function renderBasicInfo(contact) {
+  renderSimpleRows(
+    $("basicInfo"),
+    [
+      ["Имя", contact.firstName],
+      ["Фамилия", contact.lastName],
+      [
+        "Отчество / другие имена",
+        contact.middleName
+      ],
+      ["Пол", genderLabel(contact.gender)],
+      ["Дата рождения", contact.birthDate],
+      ["Дата смерти", contact.deathDate],
+      ["Место рождения", contact.birthPlace],
+      ["Место смерти", contact.deathPlace]
+    ]
+  );
 }
 
 
@@ -543,46 +723,41 @@ function renderSimpleRows(
       value !== "" &&
       value != null
     )
-    .forEach(
-      ([label, value]) => {
+    .forEach(([label, value]) => {
+      const row =
+        document.createElement("div");
 
-        const row =
-          document.createElement("div");
+      row.className = "data-row";
 
-        row.className =
-          "data-row";
+      row.innerHTML = `
+        <div class="data-label">
+          ${escapeHtml(label)}
+        </div>
 
-        row.innerHTML = `
-          <div class="data-label">
-            ${escapeHtml(label)}
-          </div>
+        <div class="data-value">
+          ${escapeHtml(value)}
+        </div>
 
-          <div class="data-value">
-            ${escapeHtml(value)}
-          </div>
+        <div></div>
+      `;
 
-          <div></div>
-        `;
-
-        container.appendChild(row);
-      }
-    );
+      container.appendChild(row);
+    });
 }
 
 
 function renderDatedRows(
   container,
-  rows
+  items
 ) {
   container.innerHTML = "";
 
-  (rows || [])
+  sortDatedItems(items || [])
     .forEach(item => {
       const row =
         document.createElement("div");
 
-      row.className =
-        "data-row";
+      row.className = "data-row";
 
       row.innerHTML = `
         <div class="data-label">
@@ -610,14 +785,12 @@ function renderContactInfo(contact) {
   );
 }
 
-
 function renderPersonalInfo(contact) {
   renderDatedRows(
     $("personalInfo"),
     contact.personalData
   );
 }
-
 
 function renderCustomFields(contact) {
   renderDatedRows(
@@ -633,7 +806,7 @@ function renderNotes(contact) {
 
   container.innerHTML = "";
 
-  (contact.notes || [])
+  sortDatedItems(contact.notes || [])
     .forEach(note => {
       const item =
         document.createElement("div");
@@ -663,72 +836,8 @@ function renderComment(contact) {
 
 
 /* =========================================================
-   СВЯЗИ
+   RELATIONS
    ========================================================= */
-
-function renderRelations(contact) {
-  const container =
-    $("relationsList");
-
-  container.innerHTML = "";
-
-  (contact.relations || [])
-    .forEach(relation => {
-
-      const target =
-        getContact(
-          relation.contactId
-        );
-
-      if (!target) return;
-
-      const row =
-        document.createElement("div");
-
-      row.className =
-        "relation-item";
-
-      const type =
-        document.createElement("div");
-
-      type.className =
-        "relation-type";
-
-      type.textContent =
-        relationLabel(
-          relation.type
-        );
-
-      const link =
-        document.createElement("a");
-
-      link.href = "#";
-      link.className =
-        "relation-link";
-
-      link.textContent =
-        shortName(target);
-
-      link.addEventListener(
-        "click",
-        event => {
-          event.preventDefault();
-
-          openContact(
-            target.id
-          );
-        }
-      );
-
-      row.append(
-        type,
-        link
-      );
-
-      container.appendChild(row);
-    });
-}
-
 
 function relationLabel(type) {
   const labels = {
@@ -747,15 +856,76 @@ function relationLabel(type) {
 }
 
 
+function renderRelations(contact) {
+  const container =
+    $("relationsList");
+
+  container.innerHTML = "";
+
+  const alreadyRendered =
+    new Set();
+
+  (contact.relations || [])
+    .forEach(relation => {
+      const target =
+        getContact(relation.contactId);
+
+      if (!target) {
+        return;
+      }
+
+      const key =
+        `${relation.type}:${target.id}`;
+
+      if (alreadyRendered.has(key)) {
+        return;
+      }
+
+      alreadyRendered.add(key);
+
+      const row =
+        document.createElement("div");
+
+      row.className =
+        "relation-item";
+
+      const type =
+        document.createElement("div");
+
+      type.className =
+        "relation-type";
+
+      type.textContent =
+        relationLabel(relation.type);
+
+      const link =
+        document.createElement("a");
+
+      link.href = "#";
+      link.className =
+        "relation-link";
+
+      link.textContent =
+        shortName(target);
+
+      link.onclick = event => {
+        event.preventDefault();
+        openContact(target.id);
+      };
+
+      row.append(type, link);
+      container.appendChild(row);
+    });
+}
+
+
 function reverseRelationType(
   type,
   sourceGender
 ) {
   switch (type) {
-
     case "father":
     case "mother":
-
       if (sourceGender === "female") {
         return "daughter";
       }
@@ -766,10 +936,8 @@ function reverseRelationType(
 
       return "other";
 
-
     case "son":
     case "daughter":
-
       if (sourceGender === "female") {
         return "mother";
       }
@@ -780,10 +948,8 @@ function reverseRelationType(
 
       return "other";
 
-
     case "brother":
     case "sister":
-
       if (sourceGender === "female") {
         return "sister";
       }
@@ -793,7 +959,6 @@ function reverseRelationType(
       }
 
       return "other";
-
 
     case "spouse":
       return "spouse";
@@ -807,7 +972,7 @@ function reverseRelationType(
 }
 
 
-function removeReverseRelations(
+function removeAutomaticReverseRelations(
   sourceId
 ) {
   database.contacts.forEach(contact => {
@@ -822,20 +987,18 @@ function removeReverseRelations(
 }
 
 
-function createReverseRelations(
+function createAutomaticReverseRelations(
   source
 ) {
-  source.relations ||= [];
-
-  source.relations.forEach(
-    relation => {
-
+  (source.relations || [])
+    .filter(relation => !relation.auto)
+    .forEach(relation => {
       const target =
-        getContact(
-          relation.contactId
-        );
+        getContact(relation.contactId);
 
-      if (!target) return;
+      if (!target) {
+        return;
+      }
 
       target.relations ||= [];
 
@@ -845,29 +1008,30 @@ function createReverseRelations(
           source.gender
         );
 
-      const exists =
+      const alreadyExists =
         target.relations.some(
-          r =>
-            r.contactId === source.id &&
-            r.autoSourceId === source.id
+          item =>
+            item.contactId === source.id &&
+            item.type === reverseType
         );
 
-      if (!exists) {
-        target.relations.push({
-          id: uuid(),
-          type: reverseType,
-          contactId: source.id,
-          auto: true,
-          autoSourceId: source.id
-        });
+      if (alreadyExists) {
+        return;
       }
-    }
-  );
+
+      target.relations.push({
+        id: uuid(),
+        type: reverseType,
+        contactId: source.id,
+        auto: true,
+        autoSourceId: source.id
+      });
+    });
 }
 
 
 /* =========================================================
-   ФОТО
+   PHOTOS
    ========================================================= */
 
 async function loadPhotoIntoImage(
@@ -878,6 +1042,7 @@ async function loadPhotoIntoImage(
     if (photoUrls.has(fileId)) {
       img.src =
         photoUrls.get(fileId);
+
       return;
     }
 
@@ -885,10 +1050,7 @@ async function loadPhotoIntoImage(
       await DriveAPI
         .getPhotoObjectUrl(fileId);
 
-    photoUrls.set(
-      fileId,
-      url
-    );
+    photoUrls.set(fileId, url);
 
     img.src = url;
 
@@ -909,18 +1071,13 @@ async function renderPhotos(contact) {
 
   photos.forEach(
     (photo, index) => {
-
       const wrapper =
         document.createElement("div");
-
-      wrapper.style.position =
-        "relative";
 
       const item =
         document.createElement("div");
 
-      item.className =
-        "photo-item";
+      item.className = "photo-item";
 
       const img =
         document.createElement("img");
@@ -935,45 +1092,36 @@ async function renderPhotos(contact) {
 
       item.appendChild(img);
 
-      item.addEventListener(
-        "click",
-        () => openPhotoViewer(
+      item.onclick = () =>
+        openPhotoViewer(
           contact,
           index
-        )
-      );
+        );
 
       const controls =
         document.createElement("div");
 
-      controls.style.display =
-        "flex";
+      controls.style.display = "flex";
+      controls.style.gap = "5px";
+      controls.style.marginTop = "5px";
 
-      controls.style.gap =
-        "5px";
 
-      controls.style.marginTop =
-        "5px";
-
-      const profileButton =
+      const profileBtn =
         document.createElement("button");
 
-      profileButton.className =
+      profileBtn.className =
         "secondary-btn";
 
-      profileButton.style.flex = "1";
+      profileBtn.style.flex = "1";
+      profileBtn.style.fontSize = "12px";
 
-      profileButton.style.fontSize =
-        "12px";
-
-      profileButton.textContent =
+      profileBtn.textContent =
         contact.profilePhotoId ===
         photo.fileId
           ? "Профильное"
           : "На профиль";
 
-      profileButton.addEventListener(
-        "click",
+      profileBtn.onclick =
         async event => {
           event.stopPropagation();
 
@@ -982,35 +1130,30 @@ async function renderPhotos(contact) {
 
           await persistDatabase();
 
-          openContact(
-            contact.id
-          );
-
           renderContacts();
-        }
-      );
+          await openContact(contact.id);
+        };
 
-      const removeButton =
+
+      const deleteBtn =
         document.createElement("button");
 
-      removeButton.className =
+      deleteBtn.className =
         "danger-btn";
 
-      removeButton.style.fontSize =
+      deleteBtn.style.fontSize =
         "12px";
 
-      removeButton.textContent =
+      deleteBtn.textContent =
         "Удалить";
 
-      removeButton.addEventListener(
-        "click",
+      deleteBtn.onclick =
         async event => {
-
           event.stopPropagation();
 
           if (
             !confirm(
-              "Удалить эту фотографию?"
+              "Удалить фотографию?"
             )
           ) {
             return;
@@ -1022,14 +1165,22 @@ async function renderPhotos(contact) {
                 photo.fileId
               );
 
-            photoUrls.delete(
-              photo.fileId
-            );
+            const oldUrl =
+              photoUrls.get(
+                photo.fileId
+              );
+
+            if (oldUrl) {
+              URL.revokeObjectURL(oldUrl);
+              photoUrls.delete(
+                photo.fileId
+              );
+            }
 
             contact.photos =
               contact.photos.filter(
-                p =>
-                  p.fileId !==
+                item =>
+                  item.fileId !==
                   photo.fileId
               );
 
@@ -1043,18 +1194,20 @@ async function renderPhotos(contact) {
 
             await persistDatabase();
 
-            openContact(contact.id);
             renderContacts();
+
+            await openContact(
+              contact.id
+            );
 
           } catch (error) {
             alert(error.message);
           }
-        }
-      );
+        };
 
       controls.append(
-        profileButton,
-        removeButton
+        profileBtn,
+        deleteBtn
       );
 
       wrapper.append(
@@ -1062,74 +1215,92 @@ async function renderPhotos(contact) {
         controls
       );
 
-      gallery.appendChild(
-        wrapper
-      );
+      gallery.appendChild(wrapper);
     }
   );
 }
 
 
-async function uploadSelectedPhotos(
-  files
+async function uploadFilesToContact(
+  contact,
+  files,
+  makeFirstProfile = false
 ) {
+  if (!files?.length) {
+    return;
+  }
+
+  const folderId =
+    await DriveAPI
+      .getOrCreateContactPhotoFolder(
+        contact.id
+      );
+
+  contact.photos ||= [];
+
+  let firstFileId = null;
+
+  for (const file of files) {
+    const uploaded =
+      await DriveAPI.uploadPhoto(
+        file,
+        folderId
+      );
+
+    contact.photos.push({
+      id: uuid(),
+      fileId: uploaded.id,
+      name: uploaded.name,
+      mimeType:
+        uploaded.mimeType ||
+        file.type,
+      createdAt:
+        uploaded.createdTime ||
+        new Date().toISOString()
+    });
+
+    if (!firstFileId) {
+      firstFileId =
+        uploaded.id;
+    }
+  }
+
+  if (
+    makeFirstProfile &&
+    firstFileId
+  ) {
+    contact.profilePhotoId =
+      firstFileId;
+  }
+}
+
+
+async function uploadSelectedPhotos(files) {
   const contact =
-    getContact(
-      currentContactId
-    );
+    getContact(currentContactId);
 
-  if (!contact) return;
-
-  if (!files.length) return;
-
-  showSync(
-    "Загрузка фотографий..."
-  );
+  if (!contact || !files.length) {
+    return;
+  }
 
   try {
-    const folderId =
-      await DriveAPI
-        .getOrCreateContactPhotoFolder(
-          contact.id
-        );
+    showSync(
+      "Загрузка фотографий..."
+    );
 
-    contact.photos ||= [];
-
-    for (const file of files) {
-
-      const uploaded =
-        await DriveAPI.uploadPhoto(
-          file,
-          folderId
-        );
-
-      contact.photos.push({
-        id: uuid(),
-        fileId:
-          uploaded.id,
-        name:
-          uploaded.name,
-        mimeType:
-          uploaded.mimeType ||
-          file.type,
-        createdAt:
-          uploaded.createdTime ||
-          new Date().toISOString()
-      });
-
-      if (!contact.profilePhotoId) {
-        contact.profilePhotoId =
-          uploaded.id;
-      }
-    }
+    await uploadFilesToContact(
+      contact,
+      files,
+      !contact.profilePhotoId
+    );
 
     await persistDatabase();
+
+    renderContacts();
 
     await openContact(
       contact.id
     );
-
-    renderContacts();
 
   } catch (error) {
     console.error(error);
@@ -1178,6 +1349,7 @@ async function renderViewerPhoto() {
   if (photoUrls.has(photo.fileId)) {
     img.src =
       photoUrls.get(photo.fileId);
+
   } else {
     const url =
       await DriveAPI
@@ -1200,37 +1372,8 @@ async function renderViewerPhoto() {
 
 
 /* =========================================================
-   ФОРМА КОНТАКТА
+   EMPTY CONTACT
    ========================================================= */
-
-function openContactForm(
-  contactId = null
-) {
-  editingContactId =
-    contactId;
-
-  const contact =
-    contactId
-      ? getContact(contactId)
-      : createBlankContact();
-
-  $("contactModalTitle")
-    .textContent =
-    contactId
-      ? "Редактировать контакт"
-      : "Новый контакт";
-
-  $("contactFormContent")
-    .innerHTML =
-    buildContactForm(contact);
-
-  bindDynamicFormButtons();
-
-  $("contactModal")
-    .classList
-    .remove("hidden");
-}
-
 
 function createBlankContact() {
   return {
@@ -1253,9 +1396,7 @@ function createBlankContact() {
     tags: [],
 
     contactData: [],
-
     personalData: [],
-
     customFields: [],
 
     notes: [],
@@ -1277,9 +1418,103 @@ function createBlankContact() {
 }
 
 
-function buildContactForm(
+/* =========================================================
+   CONTACT FORM
+   ========================================================= */
+
+function openContactForm(
+  contactId = null
+) {
+  editingContactId =
+    contactId;
+
+  pendingProfilePhoto =
+    null;
+
+  removeProfilePhoto =
+    false;
+
+  if (localProfilePreviewUrl) {
+    URL.revokeObjectURL(
+      localProfilePreviewUrl
+    );
+
+    localProfilePreviewUrl =
+      null;
+  }
+
+  const contact =
+    contactId
+      ? getContact(contactId)
+      : createBlankContact();
+
+  formContactId =
+    contact.id;
+
+  $("contactModalTitle")
+    .textContent =
+    contactId
+      ? "Редактировать контакт"
+      : "Новый контакт";
+
+  $("contactFormContent")
+    .innerHTML =
+    buildContactForm(contact);
+
+  $("formAdditionalPhotosInput").value =
+    "";
+
+  $("profilePhotoInput").value =
+    "";
+
+  renderFormProfilePhoto(contact);
+
+  bindDynamicFormButtons();
+
+  $("contactModal")
+    .classList
+    .remove("hidden");
+}
+
+
+async function renderFormProfilePhoto(
   contact
 ) {
+  const preview =
+    $("formProfilePhotoPreview");
+
+  const placeholder =
+    $("formProfilePhotoPlaceholder");
+
+  preview.src = "";
+
+  if (contact.profilePhotoId) {
+    placeholder.classList.add(
+      "hidden"
+    );
+
+    preview.classList.remove(
+      "hidden"
+    );
+
+    await loadPhotoIntoImage(
+      preview,
+      contact.profilePhotoId
+    );
+
+  } else {
+    preview.classList.add(
+      "hidden"
+    );
+
+    placeholder.classList.remove(
+      "hidden"
+    );
+  }
+}
+
+
+function buildContactForm(contact) {
   return `
 
     <section class="form-section">
@@ -1308,6 +1543,7 @@ function buildContactForm(
         )}
 
         <div class="form-field">
+
           <label class="form-label">
             Пол
           </label>
@@ -1340,7 +1576,9 @@ function buildContactForm(
             >
               Неизвестно
             </option>
+
           </select>
+
         </div>
 
         ${dateField(
@@ -1376,7 +1614,8 @@ function buildContactForm(
         ${textField(
           "tags",
           "Теги через запятую",
-          (contact.tags || []).join(", ")
+          (contact.tags || [])
+            .join(", ")
         )}
 
       </div>
@@ -1427,13 +1666,11 @@ function buildContactForm(
         id="notesRows"
         class="dynamic-container"
       >
-
         ${(contact.notes || [])
           .map(note =>
             noteRow(note)
           )
           .join("")}
-
       </div>
 
       <button
@@ -1468,17 +1705,17 @@ function buildContactForm(
         id="relationsRows"
         class="dynamic-container"
       >
-
         ${(contact.relations || [])
-          .filter(r => !r.auto)
-          .map(r =>
+          .filter(relation =>
+            !relation.auto
+          )
+          .map(relation =>
             relationRow(
-              r,
+              relation,
               contact.id
             )
           )
           .join("")}
-
       </div>
 
       <button
@@ -1544,7 +1781,7 @@ function dateField(
 
 
 /* =========================================================
-   ДИНАМИЧЕСКИЕ ПОЛЯ
+   DYNAMIC FORM
    ========================================================= */
 
 function dynamicSection(
@@ -1561,12 +1798,10 @@ function dynamicSection(
       <div
         id="${name}Rows"
         class="dynamic-container"
-        data-section="${name}"
         data-presets="${escapeHtml(
           JSON.stringify(presets)
         )}"
       >
-
         ${(rows || [])
           .map(row =>
             dynamicRow(
@@ -1575,7 +1810,6 @@ function dynamicSection(
             )
           )
           .join("")}
-
       </div>
 
       <button
@@ -1595,20 +1829,6 @@ function dynamicRow(
   row = {},
   presets = []
 ) {
-  const presetList =
-    presets.length
-      ? `
-        <datalist id="list-${uuid()}">
-          ${presets
-            .map(
-              p =>
-                `<option value="${escapeHtml(p)}">`
-            )
-            .join("")}
-        </datalist>
-      `
-      : "";
-
   const listId =
     `list-${uuid()}`;
 
@@ -1625,8 +1845,8 @@ function dynamicRow(
       <datalist id="${listId}">
         ${presets
           .map(
-            p =>
-              `<option value="${escapeHtml(p)}"></option>`
+            preset =>
+              `<option value="${escapeHtml(preset)}"></option>`
           )
           .join("")}
       </datalist>
@@ -1656,9 +1876,7 @@ function dynamicRow(
 }
 
 
-function noteRow(
-  note = {}
-) {
+function noteRow(note = {}) {
   return `
     <div class="dynamic-row dynamic-row-note">
 
@@ -1690,10 +1908,11 @@ function relationRow(
   relation = {},
   currentId
 ) {
-  const options =
+  const contacts =
     database.contacts
       .filter(
-        c => c.id !== currentId
+        contact =>
+          contact.id !== currentId
       )
       .sort(
         (a, b) =>
@@ -1702,20 +1921,7 @@ function relationRow(
               fullName(b),
               "ru"
             )
-      )
-      .map(
-        contact => `
-          <option
-            value="${contact.id}"
-            ${relation.contactId === contact.id ? "selected" : ""}
-          >
-            ${escapeHtml(
-              shortName(contact)
-            )}
-          </option>
-        `
-      )
-      .join("");
+      );
 
   return `
     <div class="dynamic-row relation-form-row">
@@ -1723,7 +1929,6 @@ function relationRow(
       <select
         class="form-select relation-type-input"
       >
-
         ${relationOption("father", "Отец", relation.type)}
         ${relationOption("mother", "Мать", relation.type)}
         ${relationOption("son", "Сын", relation.type)}
@@ -1733,17 +1938,29 @@ function relationRow(
         ${relationOption("spouse", "Супруг / супруга", relation.type)}
         ${relationOption("friend", "Друг / знакомый", relation.type)}
         ${relationOption("other", "Другая связь", relation.type)}
-
       </select>
 
       <select
         class="form-select relation-contact-input"
       >
+
         <option value="">
           Выберите контакт
         </option>
 
-        ${options}
+        ${contacts
+          .map(contact => `
+            <option
+              value="${contact.id}"
+              ${relation.contactId === contact.id ? "selected" : ""}
+            >
+              ${escapeHtml(
+                shortName(contact)
+              )}
+            </option>
+          `)
+          .join("")}
+
       </select>
 
       <div></div>
@@ -1778,18 +1995,16 @@ function relationOption(
 
 
 function bindDynamicFormButtons() {
-
   document
     .querySelectorAll(
       "[data-remove-row]"
     )
     .forEach(button => {
-      button.onclick =
-        () => {
-          button
-            .closest(".dynamic-row")
-            .remove();
-        };
+      button.onclick = () => {
+        button
+          .closest(".dynamic-row")
+          .remove();
+      };
     });
 
 
@@ -1798,9 +2013,7 @@ function bindDynamicFormButtons() {
       "[data-add-row]"
     )
     .forEach(button => {
-
       button.onclick = () => {
-
         const name =
           button.dataset.addRow;
 
@@ -1815,10 +2028,7 @@ function bindDynamicFormButtons() {
 
         container.insertAdjacentHTML(
           "beforeend",
-          dynamicRow(
-            {},
-            presets
-          )
+          dynamicRow({}, presets)
         );
 
         bindDynamicFormButtons();
@@ -1833,7 +2043,6 @@ function bindDynamicFormButtons() {
 
   if (addNote) {
     addNote.onclick = () => {
-
       $("notesRows")
         .insertAdjacentHTML(
           "beforeend",
@@ -1852,17 +2061,13 @@ function bindDynamicFormButtons() {
 
   if (addRelation) {
     addRelation.onclick = () => {
-
-      const currentId =
-        addRelation.dataset
-          .currentContact;
-
       $("relationsRows")
         .insertAdjacentHTML(
           "beforeend",
           relationRow(
             {},
-            currentId
+            addRelation.dataset
+              .currentContact
           )
         );
 
@@ -1873,17 +2078,13 @@ function bindDynamicFormButtons() {
 
 
 /* =========================================================
-   ЧТЕНИЕ ФОРМЫ
+   READ FORM
    ========================================================= */
 
-function readDynamicRows(
-  containerId
-) {
+function readDynamicRows(containerId) {
   return [
     ...$(containerId)
-      .querySelectorAll(
-        ".dynamic-row"
-      )
+      .querySelectorAll(".dynamic-row")
   ]
     .map(row => ({
       id: uuid(),
@@ -1915,9 +2116,7 @@ function readDynamicRows(
 function readNotes() {
   return [
     ...$("notesRows")
-      .querySelectorAll(
-        ".dynamic-row"
-      )
+      .querySelectorAll(".dynamic-row")
   ]
     .map(row => ({
       id: uuid(),
@@ -1925,14 +2124,12 @@ function readNotes() {
       text:
         row.querySelector(
           ".note-text-input"
-        )
-          ?.value.trim() || "",
+        )?.value.trim() || "",
 
       date:
         row.querySelector(
           ".note-date-input"
-        )
-          ?.value.trim() || ""
+        )?.value.trim() || ""
     }))
     .filter(
       note =>
@@ -1960,7 +2157,9 @@ function readRelations() {
       contactId:
         row.querySelector(
           ".relation-contact-input"
-        ).value
+        ).value,
+
+      auto: false
     }))
     .filter(
       relation =>
@@ -1970,12 +2169,75 @@ function readRelations() {
 
 
 /* =========================================================
-   СОХРАНЕНИЕ КОНТАКТА
+   PROFILE PHOTO IN FORM
    ========================================================= */
 
-async function saveContactForm(
-  event
-) {
+function selectProfilePhoto(file) {
+  if (!file) {
+    return;
+  }
+
+  pendingProfilePhoto =
+    file;
+
+  removeProfilePhoto =
+    false;
+
+  if (localProfilePreviewUrl) {
+    URL.revokeObjectURL(
+      localProfilePreviewUrl
+    );
+  }
+
+  localProfilePreviewUrl =
+    URL.createObjectURL(file);
+
+  const preview =
+    $("formProfilePhotoPreview");
+
+  preview.src =
+    localProfilePreviewUrl;
+
+  preview.classList.remove(
+    "hidden"
+  );
+
+  $("formProfilePhotoPlaceholder")
+    .classList.add(
+      "hidden"
+    );
+}
+
+
+function clearProfilePhotoFromForm() {
+  pendingProfilePhoto =
+    null;
+
+  removeProfilePhoto =
+    true;
+
+  if (localProfilePreviewUrl) {
+    URL.revokeObjectURL(
+      localProfilePreviewUrl
+    );
+
+    localProfilePreviewUrl =
+      null;
+  }
+
+  $("formProfilePhotoPreview")
+    .classList.add("hidden");
+
+  $("formProfilePhotoPlaceholder")
+    .classList.remove("hidden");
+}
+
+
+/* =========================================================
+   SAVE CONTACT
+   ========================================================= */
+
+async function saveContactForm(event) {
   event.preventDefault();
 
   const form =
@@ -1985,16 +2247,23 @@ async function saveContactForm(
 
   let contact =
     editingContactId
-      ? getContact(
-          editingContactId
-        )
+      ? getContact(editingContactId)
       : createBlankContact();
 
-  if (!contact) return;
+  if (!contact) {
+    return;
+  }
 
-  removeReverseRelations(
+  if (!editingContactId) {
+    contact.id =
+      formContactId;
+  }
+
+
+  removeAutomaticReverseRelations(
     contact.id
   );
+
 
   contact.firstName =
     safe(form.get("firstName"))
@@ -2063,42 +2332,93 @@ async function saveContactForm(
   contact.updatedAt =
     new Date().toISOString();
 
+
   if (!editingContactId) {
     database.contacts.push(
       contact
     );
   }
 
-  createReverseRelations(
-    contact
-  );
 
-  await persistDatabase();
+  try {
+    showSync("Сохранение...");
 
-  closeContactModal();
 
-  renderContacts();
+    /* Убрать профильную картинку */
+    if (removeProfilePhoto) {
+      contact.profilePhotoId =
+        null;
+    }
 
-  await openContact(
-    contact.id
-  );
+
+    /* Новая профильная фотография */
+    if (pendingProfilePhoto) {
+      await uploadFilesToContact(
+        contact,
+        [pendingProfilePhoto],
+        true
+      );
+    }
+
+
+    /* Дополнительные фото */
+    const additionalPhotos = [
+      ...$("formAdditionalPhotosInput")
+        .files
+    ];
+
+    if (additionalPhotos.length) {
+      await uploadFilesToContact(
+        contact,
+        additionalPhotos,
+        false
+      );
+
+      if (
+        !contact.profilePhotoId &&
+        contact.photos.length
+      ) {
+        contact.profilePhotoId =
+          contact.photos[0].fileId;
+      }
+    }
+
+
+    createAutomaticReverseRelations(
+      contact
+    );
+
+    await persistDatabase();
+
+    closeContactModal();
+
+    renderContacts();
+
+    await openContact(
+      contact.id
+    );
+
+  } catch (error) {
+    console.error(error);
+    alert(error.message);
+  }
 }
 
 
 /* =========================================================
-   УДАЛЕНИЕ / КОРЗИНА
+   TRASH
    ========================================================= */
 
-async function moveContactToTrash(
-  id
-) {
+async function moveContactToTrash(id) {
   const index =
     database.contacts.findIndex(
       contact =>
         contact.id === id
     );
 
-  if (index === -1) return;
+  if (index === -1) {
+    return;
+  }
 
   const contact =
     database.contacts[index];
@@ -2119,27 +2439,18 @@ async function moveContactToTrash(
   contact.deletedAt =
     new Date().toISOString();
 
-  database.trash.push(
-    contact
-  );
+  database.trash.push(contact);
 
-  database.contacts.forEach(
-    c => {
-      c.relations =
-        (c.relations || [])
-          .filter(
-            relation =>
-              relation.contactId !== id
-          );
-    }
-  );
+  /*
+    Связи специально НЕ удаляем.
+    При восстановлении они снова заработают.
+  */
 
   await persistDatabase();
 
   currentContactId = null;
 
   renderContacts();
-
   showPage("contacts");
 }
 
@@ -2156,97 +2467,98 @@ function renderTrash() {
       database.trash.length !== 0
     );
 
-  database.trash
-    .forEach(contact => {
+  database.trash.forEach(contact => {
+    const item =
+      document.createElement("div");
 
-      const item =
-        document.createElement("div");
+    item.className =
+      "contact-list-item";
 
-      item.className =
-        "contact-list-item";
+    const main =
+      document.createElement("div");
 
-      const main =
-        document.createElement("div");
+    main.className =
+      "contact-list-main";
 
-      main.className =
-        "contact-list-main";
+    main.innerHTML = `
+      <div class="contact-list-name">
+        ${escapeHtml(
+          shortName(contact)
+        )}
+      </div>
 
-      main.innerHTML = `
-        <div class="contact-list-name">
-          ${escapeHtml(
-            shortName(contact)
-          )}
-        </div>
-
-        <div class="contact-list-meta">
-          Удалён:
-          ${escapeHtml(
-            contact.deletedAt || ""
-          )}
-        </div>
-      `;
-
-      const buttons =
-        document.createElement("div");
-
-      buttons.style.marginLeft =
-        "auto";
-
-      buttons.style.display =
-        "flex";
-
-      buttons.style.gap =
-        "6px";
-
-      const restore =
-        document.createElement("button");
-
-      restore.className =
-        "secondary-btn";
-
-      restore.textContent =
-        "Восстановить";
-
-      restore.onclick =
-        async event => {
-          event.stopPropagation();
-
-          await restoreContact(
-            contact.id
-          );
-        };
+      <div class="contact-list-meta">
+        Удалён:
+        ${escapeHtml(
+          contact.deletedAt || ""
+        )}
+      </div>
+    `;
 
 
-      const remove =
-        document.createElement("button");
+    const buttons =
+      document.createElement("div");
 
-      remove.className =
-        "danger-btn";
+    buttons.style.marginLeft =
+      "auto";
 
-      remove.textContent =
-        "Удалить окончательно";
+    buttons.style.display =
+      "flex";
 
-      remove.onclick =
-        async event => {
-          event.stopPropagation();
+    buttons.style.gap =
+      "6px";
 
-          await permanentlyDeleteContact(
-            contact.id
-          );
-        };
 
-      buttons.append(
-        restore,
-        remove
-      );
+    const restore =
+      document.createElement("button");
 
-      item.append(
-        main,
-        buttons
-      );
+    restore.className =
+      "secondary-btn";
 
-      list.appendChild(item);
-    });
+    restore.textContent =
+      "Восстановить";
+
+    restore.onclick =
+      async event => {
+        event.stopPropagation();
+
+        await restoreContact(
+          contact.id
+        );
+      };
+
+
+    const remove =
+      document.createElement("button");
+
+    remove.className =
+      "danger-btn";
+
+    remove.textContent =
+      "Удалить окончательно";
+
+    remove.onclick =
+      async event => {
+        event.stopPropagation();
+
+        await permanentlyDeleteContact(
+          contact.id
+        );
+      };
+
+
+    buttons.append(
+      restore,
+      remove
+    );
+
+    item.append(
+      main,
+      buttons
+    );
+
+    list.appendChild(item);
+  });
 }
 
 
@@ -2257,7 +2569,9 @@ async function restoreContact(id) {
         contact.id === id
     );
 
-  if (index === -1) return;
+  if (index === -1) {
+    return;
+  }
 
   const contact =
     database.trash.splice(
@@ -2278,23 +2592,25 @@ async function restoreContact(id) {
 }
 
 
-async function permanentlyDeleteContact(
-  id
-) {
+async function permanentlyDeleteContact(id) {
   const contact =
     database.trash.find(
-      c => c.id === id
+      item =>
+        item.id === id
     );
 
-  if (!contact) return;
+  if (!contact) {
+    return;
+  }
 
   if (
     !confirm(
-      `Окончательно удалить "${shortName(contact)}"? Отменить это будет невозможно.`
+      `Окончательно удалить "${shortName(contact)}"?`
     )
   ) {
     return;
   }
+
 
   for (
     const photo of
@@ -2310,9 +2626,25 @@ async function permanentlyDeleteContact(
     }
   }
 
+
+  /* Удаляем ссылки */
+  [
+    ...database.contacts,
+    ...database.trash
+  ].forEach(item => {
+    item.relations =
+      (item.relations || [])
+        .filter(
+          relation =>
+            relation.contactId !== id
+        );
+  });
+
+
   database.trash =
     database.trash.filter(
-      c => c.id !== id
+      item =>
+        item.id !== id
     );
 
   await persistDatabase();
@@ -2322,7 +2654,236 @@ async function permanentlyDeleteContact(
 
 
 /* =========================================================
-   СЕМЕЙНОЕ ДЕРЕВО
+   VCARD EXPORT
+   ========================================================= */
+
+function vcardEscape(value) {
+  return safe(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+}
+
+
+function exportCurrentContact() {
+  const contact =
+    getContact(currentContactId);
+
+  if (!contact) {
+    return;
+  }
+
+  const phone =
+    getLatestStandardItem(
+      contact.contactData,
+      "phone"
+    );
+
+  const email =
+    getLatestStandardItem(
+      contact.contactData,
+      "email"
+    );
+
+  const address =
+    getLatestStandardItem(
+      contact.contactData,
+      "address"
+    );
+
+  const company =
+    getLatestStandardItem(
+      contact.personalData,
+      "company"
+    );
+
+
+  const lines = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+
+    `N:${vcardEscape(contact.lastName)};${vcardEscape(contact.firstName)};${vcardEscape(contact.middleName)};;`,
+
+    `FN:${vcardEscape(
+      shortName(contact)
+    )}`
+  ];
+
+
+  if (phone?.value) {
+    lines.push(
+      `TEL;TYPE=CELL:${vcardEscape(phone.value)}`
+    );
+  }
+
+  if (email?.value) {
+    lines.push(
+      `EMAIL;TYPE=INTERNET:${vcardEscape(email.value)}`
+    );
+  }
+
+  if (address?.value) {
+    lines.push(
+      `ADR;TYPE=HOME:;;${vcardEscape(address.value)};;;;`
+    );
+  }
+
+  if (company?.value) {
+    lines.push(
+      `ORG:${vcardEscape(company.value)}`
+    );
+  }
+
+  if (contact.birthDate) {
+    lines.push(
+      `BDAY:${contact.birthDate.replaceAll("-", "")}`
+    );
+  }
+
+  if (contact.comment) {
+    lines.push(
+      `NOTE:${vcardEscape(contact.comment)}`
+    );
+  }
+
+  lines.push(
+    "END:VCARD"
+  );
+
+
+  const blob =
+    new Blob(
+      [lines.join("\r\n")],
+      {
+        type:
+          "text/vcard;charset=utf-8"
+      }
+    );
+
+  const url =
+    URL.createObjectURL(blob);
+
+  const link =
+    document.createElement("a");
+
+  const filename =
+    (
+      shortName(contact) ||
+      "contact"
+    )
+      .replace(
+        /[\\/:*?"<>|]/g,
+        "_"
+      );
+
+  link.href = url;
+  link.download =
+    `${filename}.vcf`;
+
+  document.body.appendChild(
+    link
+  );
+
+  link.click();
+  link.remove();
+
+  setTimeout(
+    () =>
+      URL.revokeObjectURL(url),
+    1000
+  );
+}
+
+
+/* =========================================================
+   FAMILY GRAPH
+   ========================================================= */
+
+function familyRelationDelta(type) {
+  switch (type) {
+    case "father":
+    case "mother":
+      return -1;
+
+    case "son":
+    case "daughter":
+      return 1;
+
+    case "brother":
+    case "sister":
+    case "spouse":
+      return 0;
+
+    default:
+      return null;
+  }
+}
+
+
+function buildFamilyGraph() {
+  const graph =
+    new Map();
+
+  database.contacts.forEach(contact => {
+    graph.set(
+      contact.id,
+      []
+    );
+  });
+
+
+  database.contacts.forEach(source => {
+    (source.relations || [])
+      .forEach(relation => {
+        if (
+          !graph.has(
+            relation.contactId
+          )
+        ) {
+          return;
+        }
+
+        const delta =
+          familyRelationDelta(
+            relation.type
+          );
+
+        if (delta === null) {
+          return;
+        }
+
+        graph.get(source.id).push({
+          targetId:
+            relation.contactId,
+          delta,
+          type:
+            relation.type
+        });
+
+        /*
+          Обратное ребро создаём в памяти,
+          даже если его нет в JSON.
+        */
+        graph.get(
+          relation.contactId
+        ).push({
+          targetId:
+            source.id,
+          delta:
+            -delta,
+          type:
+            relation.type
+        });
+      });
+  });
+
+  return graph;
+}
+
+
+/* =========================================================
+   FAMILY ROOT
    ========================================================= */
 
 function renderFamilyRootSelect() {
@@ -2346,7 +2907,6 @@ function renderFamilyRootSelect() {
           )
     )
     .forEach(contact => {
-
       const option =
         document.createElement(
           "option"
@@ -2363,9 +2923,20 @@ function renderFamilyRootSelect() {
       );
     });
 
-  select.value = current;
+  if (
+    database.contacts.some(
+      contact =>
+        contact.id === current
+    )
+  ) {
+    select.value = current;
+  }
 }
 
+
+/* =========================================================
+   FAMILY TREE
+   ========================================================= */
 
 function renderFamilyTree() {
   const container =
@@ -2379,258 +2950,482 @@ function renderFamilyTree() {
   if (!rootId) {
     container.textContent =
       "Выберите центрального человека.";
+
     return;
   }
 
-  const root =
-    getContact(rootId);
 
-  if (!root) return;
+  const graph =
+    buildFamilyGraph();
 
-
-  const ancestors =
-    buildAncestorTree(
-      root,
-      new Set()
-    );
-
-  const descendants =
-    buildDescendantTree(
-      root,
-      new Set()
-    );
-
-
-  const layout =
-    document.createElement("div");
-
-  layout.style.display =
-    "grid";
-
-  layout.style.gridTemplateColumns =
-    "1fr auto 1fr";
-
-  layout.style.gap =
-    "30px";
-
-  layout.style.minWidth =
-    "750px";
-
-  layout.style.alignItems =
-    "center";
-
-
-  const left =
-    document.createElement("div");
-
-  left.style.display =
-    "flex";
-
-  left.style.justifyContent =
-    "flex-end";
-
-  left.appendChild(
-    ancestors
-  );
-
-
-  const center =
-    document.createElement("div");
-
-  center.appendChild(
-    createFamilyNode(root)
-  );
-
-
-  const right =
-    document.createElement("div");
-
-  right.appendChild(
-    descendants
-  );
-
-
-  layout.append(
-    left,
-    center,
-    right
-  );
-
-  container.appendChild(
-    layout
-  );
-}
-
-
-function buildAncestorTree(
-  contact,
-  visited
-) {
-  const wrapper =
-    document.createElement("div");
-
-  if (visited.has(contact.id)) {
-    return wrapper;
+  if (!graph.has(rootId)) {
+    return;
   }
 
-  visited.add(contact.id);
 
-  const parents =
-    getRelationsByTypes(
-      contact,
-      ["father", "mother"]
-    );
+  /*
+    BFS: определяем поколение относительно
+    центрального человека.
+  */
 
-  if (!parents.length) {
-    return wrapper;
+  const levels =
+    new Map();
+
+  const queue =
+    [rootId];
+
+  levels.set(
+    rootId,
+    0
+  );
+
+
+  while (queue.length) {
+    const sourceId =
+      queue.shift();
+
+    const sourceLevel =
+      levels.get(sourceId);
+
+    for (
+      const edge of
+      graph.get(sourceId) || []
+    ) {
+      if (
+        !levels.has(
+          edge.targetId
+        )
+      ) {
+        levels.set(
+          edge.targetId,
+          sourceLevel +
+          edge.delta
+        );
+
+        queue.push(
+          edge.targetId
+        );
+      }
+    }
   }
 
-  wrapper.style.display =
-    "flex";
 
-  wrapper.style.flexDirection =
-    "column";
+  const visibleIds =
+    [...levels.keys()];
 
-  wrapper.style.gap =
-    "14px";
 
-  parents.forEach(parent => {
+  const levelGroups =
+    new Map();
 
-    const row =
-      document.createElement("div");
+  visibleIds.forEach(id => {
+    const level =
+      levels.get(id);
 
-    row.style.display =
-      "flex";
+    if (!levelGroups.has(level)) {
+      levelGroups.set(
+        level,
+        []
+      );
+    }
 
-    row.style.alignItems =
-      "center";
+    levelGroups
+      .get(level)
+      .push(id);
+  });
 
-    row.style.justifyContent =
-      "flex-end";
 
-    row.style.gap =
-      "10px";
+  levelGroups.forEach(ids => {
+    ids.sort((idA, idB) => {
+      const a = getContact(idA);
+      const b = getContact(idB);
 
-    const older =
-      buildAncestorTree(
-        parent,
-        new Set(visited)
+      if (!a || !b) {
+        return 0;
+      }
+
+      /*
+        Центрального человека ставим первым
+        в своей колонке.
+      */
+      if (idA === rootId) {
+        return -1;
+      }
+
+      if (idB === rootId) {
+        return 1;
+      }
+
+      return fullName(a)
+        .localeCompare(
+          fullName(b),
+          "ru"
+        );
+    });
+  });
+
+
+  const levelValues =
+    [...levelGroups.keys()]
+      .sort((a, b) => a - b);
+
+
+  const nodeWidth = 170;
+  const nodeHeight = 135;
+
+  const columnGap = 160;
+  const rowGap = 45;
+
+  const paddingX = 70;
+  const paddingY = 40;
+
+  const maxRows =
+    Math.max(
+      ...[...levelGroups.values()]
+        .map(group => group.length),
+      1
+    );
+
+  const canvasWidth =
+    paddingX * 2 +
+    levelValues.length *
+      nodeWidth +
+    Math.max(
+      0,
+      levelValues.length - 1
+    ) *
+      columnGap;
+
+  const canvasHeight =
+    Math.max(
+      500,
+      paddingY * 2 +
+      maxRows *
+        nodeHeight +
+      Math.max(
+        0,
+        maxRows - 1
+      ) *
+        rowGap
+    );
+
+
+  const canvas =
+    document.createElement("div");
+
+  canvas.className =
+    "family-tree-canvas";
+
+  canvas.style.width =
+    `${canvasWidth}px`;
+
+  canvas.style.height =
+    `${canvasHeight}px`;
+
+
+  const svg =
+    document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg"
+    );
+
+  svg.setAttribute(
+    "class",
+    "family-tree-lines"
+  );
+
+  svg.setAttribute(
+    "viewBox",
+    `0 0 ${canvasWidth} ${canvasHeight}`
+  );
+
+
+  const positions =
+    new Map();
+
+
+  levelValues.forEach(
+    (level, columnIndex) => {
+      const ids =
+        levelGroups.get(level);
+
+      const totalHeight =
+        ids.length *
+          nodeHeight +
+        Math.max(
+          0,
+          ids.length - 1
+        ) *
+          rowGap;
+
+      const startY =
+        Math.max(
+          paddingY,
+          (canvasHeight -
+            totalHeight) /
+            2
+        );
+
+
+      ids.forEach(
+        (id, rowIndex) => {
+          const x =
+            paddingX +
+            columnIndex *
+              (
+                nodeWidth +
+                columnGap
+              );
+
+          const y =
+            startY +
+            rowIndex *
+              (
+                nodeHeight +
+                rowGap
+              );
+
+          positions.set(
+            id,
+            {
+              x,
+              y,
+              width: nodeWidth,
+              height: nodeHeight
+            }
+          );
+        }
+      );
+    }
+  );
+
+
+  /*
+    Рисуем линии.
+    Set не позволяет рисовать одну связь дважды.
+  */
+
+  const drawnEdges =
+    new Set();
+
+  visibleIds.forEach(sourceId => {
+    for (
+      const edge of
+      graph.get(sourceId) || []
+    ) {
+      if (
+        !positions.has(
+          edge.targetId
+        )
+      ) {
+        continue;
+      }
+
+      const key =
+        [sourceId, edge.targetId]
+          .sort()
+          .join(":");
+
+      if (
+        drawnEdges.has(key)
+      ) {
+        continue;
+      }
+
+      drawnEdges.add(key);
+
+
+      const a =
+        positions.get(sourceId);
+
+      const b =
+        positions.get(
+          edge.targetId
+        );
+
+
+      let x1;
+      let y1;
+      let x2;
+      let y2;
+
+
+      if (a.x < b.x) {
+        x1 =
+          a.x + a.width;
+
+        y1 =
+          a.y + a.height / 2;
+
+        x2 =
+          b.x;
+
+        y2 =
+          b.y + b.height / 2;
+
+      } else if (a.x > b.x) {
+        x1 =
+          a.x;
+
+        y1 =
+          a.y + a.height / 2;
+
+        x2 =
+          b.x + b.width;
+
+        y2 =
+          b.y + b.height / 2;
+
+      } else {
+        x1 =
+          a.x + a.width / 2;
+
+        y1 =
+          a.y + a.height;
+
+        x2 =
+          b.x + b.width / 2;
+
+        y2 =
+          b.y;
+      }
+
+
+      const path =
+        document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "path"
+        );
+
+
+      if (a.x !== b.x) {
+        const middleX =
+          (x1 + x2) / 2;
+
+        path.setAttribute(
+          "d",
+          `M ${x1} ${y1}
+           L ${middleX} ${y1}
+           L ${middleX} ${y2}
+           L ${x2} ${y2}`
+        );
+
+      } else {
+        path.setAttribute(
+          "d",
+          `M ${x1} ${y1}
+           L ${x2} ${y2}`
+        );
+      }
+
+
+      path.setAttribute(
+        "fill",
+        "none"
       );
 
-    row.append(
-      older,
-      createFamilyNode(parent)
-    );
+      path.setAttribute(
+        "stroke",
+        "#aeb6c2"
+      );
 
-    wrapper.appendChild(
-      row
-    );
+      path.setAttribute(
+        "stroke-width",
+        "2"
+      );
+
+      svg.appendChild(path);
+    }
   });
 
-  return wrapper;
-}
+
+  canvas.appendChild(svg);
 
 
-function buildDescendantTree(
-  contact,
-  visited
-) {
-  const wrapper =
-    document.createElement("div");
+  /*
+    Карточки добавляем после SVG,
+    чтобы линии находились под ними.
+  */
 
-  if (visited.has(contact.id)) {
-    return wrapper;
-  }
+  visibleIds.forEach(id => {
+    const contact =
+      getContact(id);
 
-  visited.add(contact.id);
+    if (!contact) {
+      return;
+    }
 
-  const children =
-    getRelationsByTypes(
-      contact,
-      ["son", "daughter"]
-    );
+    const position =
+      positions.get(id);
 
-  if (!children.length) {
-    return wrapper;
-  }
+    const node =
+      createFamilyNode(
+        contact
+      );
 
-  wrapper.style.display =
-    "flex";
+    node.style.left =
+      `${position.x}px`;
 
-  wrapper.style.flexDirection =
-    "column";
+    node.style.top =
+      `${position.y}px`;
 
-  wrapper.style.gap =
-    "14px";
+    node.style.height =
+      `${nodeHeight}px`;
 
-  children.forEach(child => {
-
-    const row =
-      document.createElement("div");
-
-    row.style.display =
-      "flex";
-
-    row.style.alignItems =
-      "center";
-
-    row.style.gap =
-      "10px";
-
-    row.append(
-      createFamilyNode(child),
-      buildDescendantTree(
-        child,
-        new Set(visited)
-      )
-    );
-
-    wrapper.appendChild(
-      row
-    );
+    canvas.appendChild(node);
   });
 
-  return wrapper;
+
+  container.appendChild(canvas);
+
+
+  /*
+    Автоматически прокручиваем примерно
+    к центральному человеку.
+  */
+
+  requestAnimationFrame(() => {
+    const rootPosition =
+      positions.get(rootId);
+
+    if (!rootPosition) {
+      return;
+    }
+
+    container.scrollLeft =
+      Math.max(
+        0,
+        rootPosition.x -
+        container.clientWidth / 2 +
+        nodeWidth / 2
+      );
+
+    container.scrollTop =
+      Math.max(
+        0,
+        rootPosition.y -
+        container.clientHeight / 2 +
+        nodeHeight / 2
+      );
+  });
 }
 
 
-function getRelationsByTypes(
-  contact,
-  types
-) {
-  return (contact.relations || [])
-    .filter(
-      relation =>
-        types.includes(
-          relation.type
-        )
-    )
-    .map(
-      relation =>
-        getContact(
-          relation.contactId
-        )
-    )
-    .filter(Boolean);
-}
-
-
-function createFamilyNode(
-  contact
-) {
+function createFamilyNode(contact) {
   const node =
     document.createElement("div");
 
   node.className =
     "family-node";
 
-  if (contact.profilePhotoId) {
 
+  if (contact.profilePhotoId) {
     const img =
       document.createElement("img");
 
     img.className =
       "family-node-photo";
+
+    img.alt = "";
 
     loadPhotoIntoImage(
       img,
@@ -2638,7 +3433,22 @@ function createFamilyNode(
     );
 
     node.appendChild(img);
+
+  } else {
+    const placeholder =
+      document.createElement("div");
+
+    placeholder.className =
+      "family-node-placeholder";
+
+    placeholder.textContent =
+      initials(contact);
+
+    node.appendChild(
+      placeholder
+    );
   }
+
 
   const name =
     document.createElement("div");
@@ -2649,25 +3459,27 @@ function createFamilyNode(
   name.textContent =
     shortName(contact);
 
-  const life =
+
+  const meta =
     document.createElement("div");
 
-  life.className =
-    "contact-list-meta";
+  meta.className =
+    "family-node-meta";
 
-  life.textContent =
+  meta.textContent =
     lifeText(contact);
+
 
   node.append(
     name,
-    life
+    meta
   );
 
-  node.onclick =
-    () =>
-      openContact(
-        contact.id
-      );
+
+  node.onclick = () =>
+    openContact(
+      contact.id
+    );
 
   return node;
 }
@@ -2682,16 +3494,154 @@ function closeContactModal() {
     .classList
     .add("hidden");
 
-  editingContactId = null;
+  editingContactId =
+    null;
+
+  formContactId =
+    null;
+
+  pendingProfilePhoto =
+    null;
+
+  removeProfilePhoto =
+    false;
+
+  if (localProfilePreviewUrl) {
+    URL.revokeObjectURL(
+      localProfilePreviewUrl
+    );
+
+    localProfilePreviewUrl =
+      null;
+  }
 }
 
 
 /* =========================================================
-   СОБЫТИЯ
+   LOGIN
+   ========================================================= */
+
+async function completeLogin() {
+  database =
+    await DriveAPI
+      .loadDatabase();
+
+  normalizeDatabase();
+
+  $("loginScreen")
+    .classList.add(
+      "hidden"
+    );
+
+  $("app")
+    .classList.remove(
+      "hidden"
+    );
+
+  $("loginStatus")
+    .textContent = "";
+
+  renderContacts();
+
+  showPage("contacts");
+}
+
+
+async function login() {
+  $("loginStatus")
+    .textContent =
+    "Подключение к Google Drive...";
+
+  try {
+    await DriveAPI
+      .loginWithGoogle();
+
+    await completeLogin();
+
+  } catch (error) {
+    console.error(error);
+
+    $("loginStatus")
+      .textContent =
+      error.message ||
+      "Ошибка входа.";
+  }
+}
+
+
+/*
+   При обновлении страницы сначала пытаемся
+   получить токен без дополнительного действия.
+*/
+async function tryAutomaticLogin() {
+  $("loginStatus")
+    .textContent =
+    "Подключение...";
+
+  try {
+    await DriveAPI
+      .loginWithGoogle();
+
+    await completeLogin();
+
+    return true;
+
+  } catch (error) {
+    console.log(
+      "Автоматический вход недоступен.",
+      error
+    );
+
+    $("loginStatus")
+      .textContent = "";
+
+    return false;
+  }
+}
+
+
+/* =========================================================
+   NORMALIZE DATABASE
+   ========================================================= */
+
+function normalizeDatabase() {
+  database.contacts ||= [];
+  database.trash ||= [];
+
+  database.settings ||= {
+    familyRootId: null
+  };
+
+  [
+    ...database.contacts,
+    ...database.trash
+  ].forEach(contact => {
+    contact.tags ||= [];
+
+    contact.contactData ||= [];
+    contact.personalData ||= [];
+    contact.customFields ||= [];
+
+    contact.notes ||= [];
+    contact.relations ||= [];
+    contact.photos ||= [];
+
+    if (
+      contact.profilePhotoId ===
+      undefined
+    ) {
+      contact.profilePhotoId =
+        null;
+    }
+  });
+}
+
+
+/* =========================================================
+   EVENTS
    ========================================================= */
 
 function bindEvents() {
-
   $("googleLoginBtn")
     .addEventListener(
       "click",
@@ -2721,119 +3671,86 @@ function bindEvents() {
 
 
   $("homeBtn")
-    .addEventListener(
-      "click",
-      () => {
-        renderContacts();
-        showPage("contacts");
-      }
-    );
+    .onclick = () => {
+      renderContacts();
+      showPage("contacts");
+    };
 
 
   document
-    .querySelectorAll(
-      "[data-page]"
-    )
+    .querySelectorAll("[data-page]")
     .forEach(button => {
+      button.onclick = () => {
+        const page =
+          button.dataset.page;
 
-      button.addEventListener(
-        "click",
-        () => {
-
-          const page =
-            button.dataset.page;
-
-          if (
-            page ===
-            "contacts"
-          ) {
-            renderContacts();
-          }
-
-          if (
-            page ===
-            "family"
-          ) {
-            renderFamilyRootSelect();
-            renderFamilyTree();
-          }
-
-          showPage(page);
+        if (page === "contacts") {
+          renderContacts();
         }
-      );
+
+        if (page === "family") {
+          renderFamilyRootSelect();
+          renderFamilyTree();
+        }
+
+        showPage(page);
+      };
     });
 
 
   $("addContactBtn")
-    .addEventListener(
-      "click",
-      () =>
-        openContactForm()
-    );
-
+    .onclick = () =>
+      openContactForm();
 
   $("mobileAddContactBtn")
-    .addEventListener(
-      "click",
-      () =>
-        openContactForm()
-    );
+    .onclick = () =>
+      openContactForm();
 
 
   $("editContactBtn")
-    .addEventListener(
-      "click",
-      () => {
-        if (currentContactId) {
-          openContactForm(
-            currentContactId
-          );
-        }
+    .onclick = () => {
+      if (currentContactId) {
+        openContactForm(
+          currentContactId
+        );
       }
-    );
+    };
 
 
   $("deleteContactBtn")
-    .addEventListener(
-      "click",
-      () => {
-        if (currentContactId) {
-          moveContactToTrash(
-            currentContactId
-          );
-        }
+    .onclick = () => {
+      if (currentContactId) {
+        moveContactToTrash(
+          currentContactId
+        );
       }
-    );
+    };
+
+
+  $("exportContactBtn")
+    .onclick =
+      exportCurrentContact;
 
 
   $("backToContactsBtn")
-    .addEventListener(
-      "click",
-      () => {
-        renderContacts();
-        showPage("contacts");
-      }
-    );
+    .onclick = () => {
+      renderContacts();
+      showPage("contacts");
+    };
 
 
   $("trashBtn")
-    .addEventListener(
-      "click",
-      () => {
-        renderTrash();
-        showPage("trash");
-      }
-    );
+    .onclick = () => {
+      renderTrash();
+      showPage("trash");
+    };
 
 
   $("backFromTrashBtn")
-    .addEventListener(
-      "click",
-      () => {
-        renderContacts();
-        showPage("contacts");
-      }
-    );
+    .onclick = () => {
+      renderContacts();
+      showPage("contacts");
+    };
 
 
   $("contactSearch")
@@ -2851,27 +3768,20 @@ function bindEvents() {
 
 
   $("closeContactModalBtn")
-    .addEventListener(
-      "click",
-      closeContactModal
-    );
-
+    .onclick =
+      closeContactModal;
 
   $("cancelContactBtn")
-    .addEventListener(
-      "click",
-      closeContactModal
-    );
+    .onclick =
+      closeContactModal;
 
 
   $("contactModal")
     .querySelector(
       ".modal-backdrop"
     )
-    .addEventListener(
-      "click",
-      closeContactModal
-    );
+    .onclick =
+      closeContactModal;
 
 
   $("contactForm")
@@ -2881,191 +3791,139 @@ function bindEvents() {
     );
 
 
+  $("selectProfilePhotoBtn")
+    .onclick = () =>
+      $("profilePhotoInput")
+        .click();
+
+
+  $("profilePhotoInput")
+    .onchange = event => {
+      selectProfilePhoto(
+        event.target.files[0]
+      );
+    };
+
+
+  $("removeProfilePhotoBtn")
+    .onclick =
+      clearProfilePhotoFromForm;
+
+
   $("addPhotoBtn")
-    .addEventListener(
-      "click",
-      () =>
-        $("photoInput")
-          .click()
-    );
+    .onclick = () =>
+      $("photoInput").click();
 
 
   $("photoInput")
-    .addEventListener(
-      "change",
-      event =>
-        uploadSelectedPhotos(
-          [...event.target.files]
-        )
-    );
+    .onchange = event =>
+      uploadSelectedPhotos(
+        [...event.target.files]
+      );
 
 
   $("closePhotoViewerBtn")
-    .addEventListener(
-      "click",
-      () =>
-        $("photoViewer")
-          .classList.add(
-            "hidden"
-          )
-    );
+    .onclick = () =>
+      $("photoViewer")
+        .classList.add(
+          "hidden"
+        );
 
 
   $("previousPhotoBtn")
-    .addEventListener(
-      "click",
-      async () => {
-
-        viewerPhotoIndex =
-          (
-            viewerPhotoIndex -
-            1 +
-            viewerPhotos.length
-          ) %
-          viewerPhotos.length;
-
-        await renderViewerPhoto();
+    .onclick = async () => {
+      if (!viewerPhotos.length) {
+        return;
       }
-    );
+
+      viewerPhotoIndex =
+        (
+          viewerPhotoIndex -
+          1 +
+          viewerPhotos.length
+        ) %
+        viewerPhotos.length;
+
+      await renderViewerPhoto();
+    };
 
 
   $("nextPhotoBtn")
-    .addEventListener(
-      "click",
-      async () => {
-
-        viewerPhotoIndex =
-          (
-            viewerPhotoIndex +
-            1
-          ) %
-          viewerPhotos.length;
-
-        await renderViewerPhoto();
+    .onclick = async () => {
+      if (!viewerPhotos.length) {
+        return;
       }
-    );
+
+      viewerPhotoIndex =
+        (
+          viewerPhotoIndex +
+          1
+        ) %
+        viewerPhotos.length;
+
+      await renderViewerPhoto();
+    };
 
 
   $("familyRootSelect")
-    .addEventListener(
-      "change",
-      async () => {
+    .onchange = async () => {
+      database.settings
+        .familyRootId =
+        $("familyRootSelect")
+          .value || null;
 
-        database.settings
-          .familyRootId =
-          $("familyRootSelect")
-            .value || null;
+      await persistDatabase();
 
-        await persistDatabase();
+      renderFamilyTree();
+    };
 
+
+  $("refreshFamilyTreeBtn")
+    .onclick = async () => {
+      try {
+        showSync(
+          "Обновление..."
+        );
+
+        database =
+          await DriveAPI
+            .loadDatabase();
+
+        normalizeDatabase();
+
+        renderFamilyRootSelect();
         renderFamilyTree();
+
+        showSync("Обновлено");
+        hideSync();
+
+      } catch (error) {
+        alert(error.message);
       }
-    );
+    };
 
 
-  document
-    .addEventListener(
-      "keydown",
-      event => {
-
-        if (event.key === "Escape") {
-
-          $("photoViewer")
-            .classList.add(
-              "hidden"
-            );
-
-          if (
-            !$("contactModal")
-              .classList
-              .contains("hidden")
-          ) {
-            closeContactModal();
-          }
-        }
+  document.addEventListener(
+    "keydown",
+    event => {
+      if (event.key !== "Escape") {
+        return;
       }
-    );
-}
 
-
-/* =========================================================
-   LOGIN
-   ========================================================= */
-
-async function login() {
-  $("loginStatus")
-    .textContent =
-    "Подключение к Google Drive...";
-
-  try {
-    await DriveAPI
-      .loginWithGoogle();
-
-    database =
-      await DriveAPI
-        .loadDatabase();
-
-    normalizeDatabase();
-
-    $("loginScreen")
-      .classList.add(
-        "hidden"
-      );
-
-    $("app")
-      .classList.remove(
-        "hidden"
-      );
-
-    $("loginStatus")
-      .textContent = "";
-
-    renderContacts();
-
-    showPage("contacts");
-
-  } catch (error) {
-    console.error(error);
-
-    $("loginStatus")
-      .textContent =
-      error.message ||
-      "Ошибка входа.";
-  }
-}
-
-
-/* =========================================================
-   НОРМАЛИЗАЦИЯ БАЗЫ
-   ========================================================= */
-
-function normalizeDatabase() {
-  database.contacts ||= [];
-  database.trash ||= [];
-
-  database.settings ||= {
-    familyRootId: null
-  };
-
-  database.contacts
-    .forEach(contact => {
-
-      contact.tags ||= [];
-      contact.contactData ||= [];
-      contact.personalData ||= [];
-      contact.customFields ||= [];
-      contact.notes ||= [];
-      contact.relations ||= [];
-      contact.photos ||= [];
+      $("photoViewer")
+        .classList.add(
+          "hidden"
+        );
 
       if (
-        contact.profilePhotoId ===
-        undefined
+        !$("contactModal")
+          .classList
+          .contains("hidden")
       ) {
-        contact.profilePhotoId =
-          null;
+        closeContactModal();
       }
-    });
+    }
+  );
 }
 
 
@@ -3100,14 +3958,19 @@ function registerServiceWorker() {
 document.addEventListener(
   "DOMContentLoaded",
   async () => {
-
     bindEvents();
-
     registerServiceWorker();
 
     try {
       await DriveAPI
         .initializeGoogleAuth();
+
+      /*
+        Пытаемся войти автоматически.
+        Если браузер/Google это не разрешит,
+        остаётся обычная кнопка входа.
+      */
+      await tryAutomaticLogin();
 
     } catch (error) {
       console.error(error);
