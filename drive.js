@@ -20,14 +20,14 @@ let driveIds = {
 
 
 /* =========================================================
-   ИНИЦИАЛИЗАЦИЯ GOOGLE LOGIN
+   GOOGLE AUTH
    ========================================================= */
 
 function initializeGoogleAuth() {
   return new Promise((resolve, reject) => {
     let attempts = 0;
 
-    const waitForGoogle = () => {
+    const wait = () => {
       attempts++;
 
       if (
@@ -35,86 +35,70 @@ function initializeGoogleAuth() {
         google.accounts &&
         google.accounts.oauth2
       ) {
-        googleTokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: GOOGLE_SCOPE,
+        googleTokenClient =
+          google.accounts.oauth2.initTokenClient({
+            client_id: GOOGLE_CLIENT_ID,
+            scope: GOOGLE_SCOPE,
+            callback: () => {}
+          });
 
-          callback: async (response) => {
-            if (response.error) {
-              console.error("Google OAuth error:", response);
-              reject(response);
-              return;
-            }
-
-            googleAccessToken = response.access_token;
-
-            try {
-              await initializeDriveStorage();
-              resolve();
-            } catch (error) {
-              reject(error);
-            }
-          }
-        });
-
+        resolve();
         return;
       }
 
-      if (attempts > 50) {
-        reject(new Error("Google Identity Services не загрузился."));
+      if (attempts >= 100) {
+        reject(
+          new Error("Google Identity Services не загрузился.")
+        );
         return;
       }
 
-      setTimeout(waitForGoogle, 100);
+      setTimeout(wait, 100);
     };
 
-    waitForGoogle();
+    wait();
   });
 }
 
 
-/* =========================================================
-   ВХОД
-   ========================================================= */
-
 function loginWithGoogle() {
   return new Promise((resolve, reject) => {
+
     if (!googleTokenClient) {
-      reject(new Error("Google Login ещё не инициализирован."));
+      reject(
+        new Error("Google Login не инициализирован.")
+      );
       return;
     }
 
-    googleTokenClient.callback = async (response) => {
-      if (response.error) {
-        reject(response);
-        return;
-      }
+    googleTokenClient.callback =
+      async (response) => {
 
-      googleAccessToken = response.access_token;
+        if (response.error) {
+          reject(response);
+          return;
+        }
 
-      try {
-        await initializeDriveStorage();
-        resolve();
-      } catch (error) {
-        reject(error);
-      }
-    };
+        googleAccessToken =
+          response.access_token;
+
+        try {
+          await initializeDriveStorage();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      };
 
     googleTokenClient.requestAccessToken({
-      prompt: googleAccessToken ? "" : "consent"
+      prompt: ""
     });
   });
 }
 
 
-/* =========================================================
-   ВЫХОД
-   ========================================================= */
-
 function logoutGoogle() {
-  if (!googleAccessToken) {
-    return;
-  }
+  if (!googleAccessToken) return;
 
   google.accounts.oauth2.revoke(
     googleAccessToken,
@@ -133,38 +117,51 @@ function logoutGoogle() {
 
 
 /* =========================================================
-   GOOGLE DRIVE API REQUEST
+   DRIVE REQUEST
    ========================================================= */
 
-async function driveRequest(url, options = {}) {
+async function driveRequest(
+  url,
+  options = {}
+) {
   if (!googleAccessToken) {
-    throw new Error("Нет авторизации Google.");
+    throw new Error(
+      "Нет авторизации Google."
+    );
   }
 
-  const headers = new Headers(options.headers || {});
+  const headers =
+    new Headers(options.headers || {});
 
   headers.set(
     "Authorization",
     `Bearer ${googleAccessToken}`
   );
 
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
+  const response = await fetch(
+    url,
+    {
+      ...options,
+      headers
+    }
+  );
 
   if (response.status === 401) {
     googleAccessToken = null;
-    throw new Error("Сессия Google истекла. Войдите снова.");
+
+    throw new Error(
+      "Сессия Google истекла. Войдите снова."
+    );
   }
 
   if (!response.ok) {
-    const errorText = await response.text();
+    const text =
+      await response.text();
 
     console.error(
-      "Google Drive API error:",
+      "Google Drive API:",
       response.status,
-      errorText
+      text
     );
 
     throw new Error(
@@ -177,174 +174,189 @@ async function driveRequest(url, options = {}) {
 
 
 /* =========================================================
-   СОЗДАНИЕ СТРУКТУРЫ DRIVE
+   ПОИСК ФАЙЛА / ПАПКИ
+   ========================================================= */
+
+async function findDriveItem(
+  name,
+  parentId = null,
+  mimeType = null
+) {
+  let query =
+    `name='${escapeDriveQuery(name)}' and trashed=false`;
+
+  if (parentId) {
+    query +=
+      ` and '${parentId}' in parents`;
+  }
+
+  if (mimeType) {
+    query +=
+      ` and mimeType='${mimeType}'`;
+  }
+
+  const url =
+    "https://www.googleapis.com/drive/v3/files" +
+    "?spaces=drive" +
+    "&fields=files(id,name,mimeType,parents)" +
+    "&pageSize=20" +
+    "&q=" +
+    encodeURIComponent(query);
+
+  const response =
+    await driveRequest(url);
+
+  const data =
+    await response.json();
+
+  if (!data.files?.length) {
+    return null;
+  }
+
+  return data.files[0];
+}
+
+
+function escapeDriveQuery(value) {
+  return String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'");
+}
+
+
+/* =========================================================
+   СОЗДАНИЕ / ПОИСК СТРУКТУРЫ
    ========================================================= */
 
 async function initializeDriveStorage() {
-  /*
-    С drive.file приложение видит файлы,
-    которые создало само.
 
-    Поэтому ID созданных объектов сохраняются
-    локально в браузере.
-  */
+  let root =
+    await findDriveItem(
+      CRM_ROOT_FOLDER_NAME,
+      null,
+      "application/vnd.google-apps.folder"
+    );
 
-  loadDriveIds();
-
-  if (
-    driveIds.rootFolderId &&
-    driveIds.dataFolderId &&
-    driveIds.photosFolderId &&
-    driveIds.contactsFileId
-  ) {
-    try {
-      await verifyDriveFile(driveIds.contactsFileId);
-      return;
-    } catch (error) {
-      console.warn(
-        "Сохранённая структура Drive больше недоступна. Создаём заново."
+  if (!root) {
+    root =
+      await createFolder(
+        CRM_ROOT_FOLDER_NAME
       );
-
-      clearDriveIds();
-    }
   }
 
-  const rootFolder = await createFolder(
-    CRM_ROOT_FOLDER_NAME,
-    null
-  );
+  driveIds.rootFolderId =
+    root.id;
 
-  driveIds.rootFolderId = rootFolder.id;
 
-  const dataFolder = await createFolder(
-    CRM_DATA_FOLDER_NAME,
-    driveIds.rootFolderId
-  );
+  let dataFolder =
+    await findDriveItem(
+      CRM_DATA_FOLDER_NAME,
+      root.id,
+      "application/vnd.google-apps.folder"
+    );
 
-  driveIds.dataFolderId = dataFolder.id;
+  if (!dataFolder) {
+    dataFolder =
+      await createFolder(
+        CRM_DATA_FOLDER_NAME,
+        root.id
+      );
+  }
 
-  const photosFolder = await createFolder(
-    CRM_PHOTOS_FOLDER_NAME,
-    driveIds.rootFolderId
-  );
+  driveIds.dataFolderId =
+    dataFolder.id;
 
-  driveIds.photosFolderId = photosFolder.id;
 
-  const contactsFile = await createJsonFile(
-    CONTACTS_FILE_NAME,
-    createEmptyDatabase(),
-    driveIds.dataFolderId
-  );
+  let photosFolder =
+    await findDriveItem(
+      CRM_PHOTOS_FOLDER_NAME,
+      root.id,
+      "application/vnd.google-apps.folder"
+    );
 
-  driveIds.contactsFileId = contactsFile.id;
+  if (!photosFolder) {
+    photosFolder =
+      await createFolder(
+        CRM_PHOTOS_FOLDER_NAME,
+        root.id
+      );
+  }
 
-  saveDriveIds();
+  driveIds.photosFolderId =
+    photosFolder.id;
+
+
+  let contactsFile =
+    await findDriveItem(
+      CONTACTS_FILE_NAME,
+      dataFolder.id,
+      "application/json"
+    );
+
+  if (!contactsFile) {
+    contactsFile =
+      await createJsonFile(
+        CONTACTS_FILE_NAME,
+        createEmptyDatabase(),
+        dataFolder.id
+      );
+  }
+
+  driveIds.contactsFileId =
+    contactsFile.id;
 }
 
 
 /* =========================================================
-   ПРОВЕРКА ФАЙЛА
+   CREATE FOLDER
    ========================================================= */
 
-async function verifyDriveFile(fileId) {
-  const response = await driveRequest(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,trashed`
-  );
-
-  const file = await response.json();
-
-  if (file.trashed) {
-    throw new Error("Файл находится в корзине.");
-  }
-
-  return file;
-}
-
-
-/* =========================================================
-   СОЗДАНИЕ ПАПКИ
-   ========================================================= */
-
-async function createFolder(name, parentId = null) {
+async function createFolder(
+  name,
+  parentId = null
+) {
   const metadata = {
-    name: name,
-    mimeType: "application/vnd.google-apps.folder"
+    name,
+    mimeType:
+      "application/vnd.google-apps.folder"
   };
 
   if (parentId) {
-    metadata.parents = [parentId];
+    metadata.parents =
+      [parentId];
   }
 
-  const response = await driveRequest(
-    "https://www.googleapis.com/drive/v3/files?fields=id,name",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(metadata)
-    }
-  );
+  const response =
+    await driveRequest(
+      "https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+        body:
+          JSON.stringify(metadata)
+      }
+    );
 
   return response.json();
 }
 
 
 /* =========================================================
-   СОЗДАНИЕ JSON
-   ========================================================= */
-
-async function createJsonFile(
-  filename,
-  data,
-  parentId
-) {
-  const metadata = {
-    name: filename,
-    mimeType: "application/json",
-    parents: [parentId]
-  };
-
-  const boundary =
-    "crm_boundary_" +
-    Math.random().toString(36).slice(2);
-
-  const body =
-    `--${boundary}\r\n` +
-    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-    JSON.stringify(metadata) +
-    `\r\n--${boundary}\r\n` +
-    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-    JSON.stringify(data, null, 2) +
-    `\r\n--${boundary}--`;
-
-  const response = await driveRequest(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          `multipart/related; boundary=${boundary}`
-      },
-      body
-    }
-  );
-
-  return response.json();
-}
-
-
-/* =========================================================
-   ПУСТАЯ БАЗА
+   EMPTY DATABASE
    ========================================================= */
 
 function createEmptyDatabase() {
   return {
     version: 1,
 
-    createdAt: new Date().toISOString(),
+    createdAt:
+      new Date().toISOString(),
 
-    updatedAt: new Date().toISOString(),
+    updatedAt:
+      new Date().toISOString(),
 
     settings: {
       familyRootId: null
@@ -358,174 +370,256 @@ function createEmptyDatabase() {
 
 
 /* =========================================================
-   ЗАГРУЗКА БАЗЫ
+   CREATE JSON
+   ========================================================= */
+
+async function createJsonFile(
+  filename,
+  data,
+  parentId
+) {
+  const metadata = {
+    name: filename,
+    mimeType:
+      "application/json",
+    parents:
+      [parentId]
+  };
+
+  const boundary =
+    "crm_" +
+    crypto.randomUUID();
+
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    JSON.stringify(metadata) +
+    `\r\n--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    JSON.stringify(data, null, 2) +
+    `\r\n--${boundary}--`;
+
+  const response =
+    await driveRequest(
+      "https://www.googleapis.com/upload/drive/v3/files" +
+      "?uploadType=multipart" +
+      "&fields=id,name,mimeType",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            `multipart/related; boundary=${boundary}`
+        },
+
+        body
+      }
+    );
+
+  return response.json();
+}
+
+
+/* =========================================================
+   LOAD DATABASE
    ========================================================= */
 
 async function loadDatabase() {
   if (!driveIds.contactsFileId) {
-    throw new Error("Файл contacts.json не найден.");
+    throw new Error(
+      "contacts.json не найден."
+    );
   }
 
-  const response = await driveRequest(
-    `https://www.googleapis.com/drive/v3/files/${driveIds.contactsFileId}?alt=media`
-  );
+  const response =
+    await driveRequest(
+      `https://www.googleapis.com/drive/v3/files/${driveIds.contactsFileId}?alt=media`
+    );
 
-  const text = await response.text();
+  const text =
+    await response.text();
 
   if (!text.trim()) {
     return createEmptyDatabase();
   }
 
   try {
-    return JSON.parse(text);
-  } catch (error) {
-    console.error(error);
+    const database =
+      JSON.parse(text);
 
+    database.contacts ||=
+      [];
+
+    database.trash ||=
+      [];
+
+    database.settings ||=
+      {
+        familyRootId: null
+      };
+
+    return database;
+
+  } catch {
     throw new Error(
-      "contacts.json повреждён или содержит некорректные данные."
+      "Файл contacts.json повреждён."
     );
   }
 }
 
 
 /* =========================================================
-   СОХРАНЕНИЕ БАЗЫ
+   SAVE DATABASE
    ========================================================= */
 
-async function saveDatabase(database) {
-  if (!driveIds.contactsFileId) {
-    throw new Error("Файл contacts.json не найден.");
-  }
+async function saveDatabase(
+  database
+) {
+  database.updatedAt =
+    new Date().toISOString();
 
-  database.updatedAt = new Date().toISOString();
+  const response =
+    await driveRequest(
+      "https://www.googleapis.com/upload/drive/v3/files/" +
+      driveIds.contactsFileId +
+      "?uploadType=media",
+      {
+        method: "PATCH",
 
-  const response = await driveRequest(
-    `https://www.googleapis.com/upload/drive/v3/files/${driveIds.contactsFileId}?uploadType=media`,
-    {
-      method: "PATCH",
-      headers: {
-        "Content-Type":
-          "application/json; charset=UTF-8"
-      },
-      body: JSON.stringify(database, null, 2)
-    }
-  );
+        headers: {
+          "Content-Type":
+            "application/json; charset=UTF-8"
+        },
+
+        body:
+          JSON.stringify(
+            database,
+            null,
+            2
+          )
+      }
+    );
 
   return response.json();
 }
 
 
 /* =========================================================
-   ПАПКА ФОТОГРАФИЙ КОНТАКТА
+   CONTACT PHOTO FOLDER
    ========================================================= */
 
-async function createContactPhotoFolder(contactId) {
-  if (!driveIds.photosFolderId) {
-    throw new Error("Папка photos не найдена.");
-  }
+async function getOrCreateContactPhotoFolder(
+  contactId
+) {
+  let folder =
+    await findDriveItem(
+      contactId,
+      driveIds.photosFolderId,
+      "application/vnd.google-apps.folder"
+    );
 
-  const folder = await createFolder(
-    contactId,
-    driveIds.photosFolderId
-  );
+  if (!folder) {
+    folder =
+      await createFolder(
+        contactId,
+        driveIds.photosFolderId
+      );
+  }
 
   return folder.id;
 }
 
 
 /* =========================================================
-   ЗАГРУЗКА ФОТО
+   UPLOAD PHOTO
    ========================================================= */
 
 async function uploadPhoto(
   file,
   contactPhotoFolderId
 ) {
-  if (!file) {
-    throw new Error("Файл фотографии не выбран.");
-  }
-
   const metadata = {
     name: file.name,
-    parents: [contactPhotoFolderId]
+
+    parents:
+      [contactPhotoFolderId]
   };
 
   const boundary =
-    "crm_photo_boundary_" +
-    Math.random().toString(36).slice(2);
+    "crm_photo_" +
+    crypto.randomUUID();
 
-  const metadataBlob = new Blob(
-    [JSON.stringify(metadata)],
-    {
-      type: "application/json"
-    }
-  );
+  const multipartBody =
+    new Blob(
+      [
+        `--${boundary}\r\n`,
+        "Content-Type: application/json; charset=UTF-8\r\n\r\n",
+        JSON.stringify(metadata),
 
-  const body = new FormData();
+        `\r\n--${boundary}\r\n`,
+        `Content-Type: ${file.type || "application/octet-stream"}\r\n\r\n`,
 
-  /*
-    Для multipart upload Google Drive API
-    удобнее сформировать multipart/related вручную,
-    поэтому ниже собираем Blob.
-  */
+        file,
 
-  const multipartBody = new Blob(
-    [
-      `--${boundary}\r\n`,
-      `Content-Type: application/json; charset=UTF-8\r\n\r\n`,
-      metadataBlob,
-      `\r\n--${boundary}\r\n`,
-      `Content-Type: ${file.type || "application/octet-stream"}\r\n\r\n`,
-      file,
-      `\r\n--${boundary}--`
-    ]
-  );
+        `\r\n--${boundary}--`
+      ]
+    );
 
-  const response = await driveRequest(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          `multipart/related; boundary=${boundary}`
-      },
-      body: multipartBody
-    }
-  );
+  const response =
+    await driveRequest(
+      "https://www.googleapis.com/upload/drive/v3/files" +
+      "?uploadType=multipart" +
+      "&fields=id,name,mimeType,size,createdTime",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            `multipart/related; boundary=${boundary}`
+        },
+
+        body:
+          multipartBody
+      }
+    );
 
   return response.json();
 }
 
 
 /* =========================================================
-   ПОЛУЧЕНИЕ ФОТО
+   PHOTO
    ========================================================= */
 
-async function getPhotoBlob(fileId) {
-  const response = await driveRequest(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`
-  );
+async function getPhotoBlob(
+  fileId
+) {
+  const response =
+    await driveRequest(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`
+    );
 
   return response.blob();
 }
 
 
-/* =========================================================
-   URL ФОТО ДЛЯ <img>
-   ========================================================= */
-
-async function getPhotoObjectUrl(fileId) {
-  const blob = await getPhotoBlob(fileId);
+async function getPhotoObjectUrl(
+  fileId
+) {
+  const blob =
+    await getPhotoBlob(fileId);
 
   return URL.createObjectURL(blob);
 }
 
 
 /* =========================================================
-   УДАЛЕНИЕ ФОТО
+   DELETE / TRASH DRIVE FILE
    ========================================================= */
 
-async function deleteDriveFile(fileId) {
+async function deleteDriveFile(
+  fileId
+) {
   await driveRequest(
     `https://www.googleapis.com/drive/v3/files/${fileId}`,
     {
@@ -535,83 +629,39 @@ async function deleteDriveFile(fileId) {
 }
 
 
-/* =========================================================
-   ПЕРЕМЕЩЕНИЕ DRIVE-ФАЙЛА В КОРЗИНУ
-   ========================================================= */
+async function trashDriveFile(
+  fileId
+) {
+  const response =
+    await driveRequest(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed`,
+      {
+        method: "PATCH",
 
-async function trashDriveFile(fileId) {
-  const response = await driveRequest(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed`,
-    {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        trashed: true
-      })
-    }
-  );
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            trashed: true
+          })
+      }
+    );
 
   return response.json();
 }
 
 
 /* =========================================================
-   ЛОКАЛЬНОЕ ХРАНЕНИЕ ID
-   ========================================================= */
-
-function saveDriveIds() {
-  localStorage.setItem(
-    "personalCRM_driveIds",
-    JSON.stringify(driveIds)
-  );
-}
-
-
-function loadDriveIds() {
-  try {
-    const saved =
-      localStorage.getItem("personalCRM_driveIds");
-
-    if (!saved) {
-      return;
-    }
-
-    const parsed = JSON.parse(saved);
-
-    driveIds = {
-      ...driveIds,
-      ...parsed
-    };
-  } catch (error) {
-    console.warn(
-      "Не удалось прочитать сохранённые Drive ID."
-    );
-  }
-}
-
-
-function clearDriveIds() {
-  localStorage.removeItem(
-    "personalCRM_driveIds"
-  );
-
-  driveIds = {
-    rootFolderId: null,
-    dataFolderId: null,
-    photosFolderId: null,
-    contactsFileId: null
-  };
-}
-
-
-/* =========================================================
-   СОСТОЯНИЕ
+   STATUS
    ========================================================= */
 
 function isGoogleAuthenticated() {
-  return Boolean(googleAccessToken);
+  return Boolean(
+    googleAccessToken
+  );
 }
 
 
@@ -623,10 +673,11 @@ function getDriveIds() {
 
 
 /* =========================================================
-   API ДЛЯ app.js
+   PUBLIC API
    ========================================================= */
 
 window.DriveAPI = {
+
   initializeGoogleAuth,
   loginWithGoogle,
   logoutGoogle,
@@ -634,10 +685,12 @@ window.DriveAPI = {
   loadDatabase,
   saveDatabase,
 
-  createContactPhotoFolder,
+  getOrCreateContactPhotoFolder,
+
   uploadPhoto,
   getPhotoBlob,
   getPhotoObjectUrl,
+
   deleteDriveFile,
   trashDriveFile,
 
