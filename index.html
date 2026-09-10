@@ -18,7 +18,7 @@
 
 <body>
 
-  <!-- Экран авторизации -->
+  <!-- Авторизация -->
   <div id="loginScreen" class="login-screen">
     <div class="login-card">
       <h1>PersonalCRM</h1>
@@ -33,10 +33,9 @@
   </div>
 
 
-  <!-- Основное приложение -->
+  <!-- Приложение -->
   <div id="app" class="app hidden">
 
-    <!-- Верхняя панель -->
     <header class="topbar">
       <div class="topbar-inner">
 
@@ -55,11 +54,11 @@
         </nav>
 
         <div class="topbar-actions">
-          <button id="trashBtn" class="icon-btn" title="Корзина">
+          <button id="trashBtn" class="icon-btn">
             Корзина
           </button>
 
-          <button id="logoutBtn" class="icon-btn" title="Выйти">
+          <button id="logoutBtn" class="icon-btn">
             Выйти
           </button>
         </div>
@@ -71,7 +70,7 @@
     <main class="main-content">
 
       <!-- ================================================= -->
-      <!-- СТРАНИЦА 1: ВСЕ КОНТАКТЫ -->
+      <!-- КОНТАКТЫ -->
       <!-- ================================================= -->
 
       <section id="contactsPage" class="page active">
@@ -102,9 +101,7 @@
 
         <div id="contactsCount" class="contacts-count"></div>
 
-        <div id="contactsList" class="contacts-list">
-          <!-- Контакты создаёт app.js -->
-        </div>
+        <div id="contactsList" class="contacts-list"></div>
 
         <div id="emptyContacts" class="empty-state hidden">
           Контактов пока нет.
@@ -114,7 +111,7 @@
 
 
       <!-- ================================================= -->
-      <!-- СТРАНИЦА 2: КАРТОЧКА КОНТАКТА -->
+      <!-- КАРТОЧКА КОНТАКТА -->
       <!-- ================================================= -->
 
       <section id="contactPage" class="page">
@@ -126,6 +123,11 @@
           </button>
 
           <div class="contact-action-buttons">
+
+            <button id="exportContactBtn" class="secondary-btn">
+              Экспорт .vcf
+            </button>
+
             <button id="editContactBtn" class="secondary-btn">
               Редактировать
             </button>
@@ -133,6 +135,7 @@
             <button id="deleteContactBtn" class="danger-btn">
               В корзину
             </button>
+
           </div>
 
         </div>
@@ -140,7 +143,6 @@
 
         <article class="contact-profile">
 
-          <!-- Шапка -->
           <section class="profile-header">
 
             <div
@@ -153,7 +155,10 @@
                 alt="Фото профиля"
               >
 
-              <div id="profilePhotoPlaceholder" class="profile-photo-placeholder">
+              <div
+                id="profilePhotoPlaceholder"
+                class="profile-photo-placeholder"
+              >
                 Нет фото
               </div>
             </div>
@@ -164,71 +169,55 @@
 
             <div id="profileCategory" class="profile-category"></div>
 
-            <div id="profileTags" class="tags-container">
-              <!-- Теги -->
-            </div>
+            <div id="profileTags" class="tags-container"></div>
 
           </section>
 
 
-          <!-- Основные данные -->
           <section class="profile-section">
             <h2>Основные данные</h2>
-
             <div id="basicInfo" class="data-list"></div>
           </section>
 
 
-          <!-- Контакты -->
           <section class="profile-section">
             <h2>Контактные данные</h2>
-
             <div id="contactInfo" class="data-list"></div>
           </section>
 
 
-          <!-- Личная информация -->
           <section class="profile-section">
             <h2>Личная информация</h2>
-
             <div id="personalInfo" class="data-list"></div>
           </section>
 
 
-          <!-- Пользовательские поля -->
           <section class="profile-section">
             <h2>Дополнительная информация</h2>
-
             <div id="customFields" class="data-list"></div>
           </section>
 
 
-          <!-- Заметки -->
           <section class="profile-section">
             <h2>Заметки</h2>
-
             <div id="notesList" class="notes-list"></div>
           </section>
 
 
-          <!-- Комментарий -->
           <section class="profile-section">
             <h2>Комментарий</h2>
-
             <div id="contactComment" class="comment-box"></div>
           </section>
 
 
-          <!-- Связи -->
           <section class="profile-section">
             <h2>Связи</h2>
-
             <div id="relationsList" class="relations-list"></div>
           </section>
 
 
-          <!-- Фотографии -->
           <section class="profile-section">
+
             <div class="section-title-row">
               <h2>Фотографии</h2>
 
@@ -246,6 +235,7 @@
             >
 
             <div id="photoGallery" class="photo-gallery"></div>
+
           </section>
 
         </article>
@@ -254,13 +244,17 @@
 
 
       <!-- ================================================= -->
-      <!-- СТРАНИЦА 3: СЕМЕЙНОЕ ДЕРЕВО -->
+      <!-- СЕМЕЙНОЕ ДЕРЕВО -->
       <!-- ================================================= -->
 
       <section id="familyPage" class="page">
 
         <div class="page-header">
           <h1>Семейное дерево</h1>
+
+          <button id="refreshFamilyTreeBtn" class="secondary-btn">
+            Обновить
+          </button>
         </div>
 
         <div class="family-controls">
@@ -275,9 +269,7 @@
 
         </div>
 
-        <div id="familyTree" class="family-tree">
-          <!-- Дерево создаёт app.js -->
-        </div>
+        <div id="familyTree" class="family-tree"></div>
 
       </section>
 
@@ -307,7 +299,7 @@
     </main>
 
 
-    <!-- Нижняя навигация для телефона -->
+    <!-- Нижняя навигация -->
     <nav class="mobile-nav">
 
       <button data-page="contacts" class="mobile-nav-btn active">
@@ -328,7 +320,7 @@
 
 
   <!-- ================================================= -->
-  <!-- ОКНО СОЗДАНИЯ / РЕДАКТИРОВАНИЯ КОНТАКТА -->
+  <!-- СОЗДАНИЕ / РЕДАКТИРОВАНИЕ -->
   <!-- ================================================= -->
 
   <div id="contactModal" class="modal hidden">
@@ -338,6 +330,7 @@
     <div class="modal-window">
 
       <div class="modal-header">
+
         <h2 id="contactModalTitle">
           Новый контакт
         </h2>
@@ -345,14 +338,90 @@
         <button id="closeContactModalBtn" class="close-btn">
           ×
         </button>
+
       </div>
 
       <form id="contactForm" class="contact-form">
 
-        <!-- Содержимое формы создаёт app.js -->
+        <!-- Фото профиля -->
+        <section class="form-section">
+
+          <h3>Фото профиля</h3>
+
+          <div class="form-photo-block">
+
+            <div class="form-profile-preview-wrap">
+              <img
+                id="formProfilePhotoPreview"
+                class="form-profile-preview hidden"
+                alt="Фото профиля"
+              >
+
+              <div
+                id="formProfilePhotoPlaceholder"
+                class="form-profile-placeholder"
+              >
+                Нет фото
+              </div>
+            </div>
+
+            <div class="form-photo-actions">
+
+              <button
+                type="button"
+                id="selectProfilePhotoBtn"
+                class="secondary-btn"
+              >
+                Выбрать фото
+              </button>
+
+              <button
+                type="button"
+                id="removeProfilePhotoBtn"
+                class="danger-btn"
+              >
+                Убрать фото
+              </button>
+
+            </div>
+
+            <input
+              id="profilePhotoInput"
+              type="file"
+              accept="image/*"
+              hidden
+            >
+
+          </div>
+
+        </section>
+
+
+        <!-- Остальная форма -->
         <div id="contactFormContent"></div>
 
+
+        <!-- Дополнительные фото -->
+        <section class="form-section">
+
+          <h3>Дополнительные фотографии</h3>
+
+          <input
+            id="formAdditionalPhotosInput"
+            type="file"
+            accept="image/*"
+            multiple
+          >
+
+          <div class="form-help">
+            Можно выбрать несколько фотографий сразу.
+          </div>
+
+        </section>
+
+
         <div class="form-actions">
+
           <button
             type="button"
             id="cancelContactBtn"
@@ -367,6 +436,7 @@
           >
             Сохранить
           </button>
+
         </div>
 
       </form>
@@ -405,19 +475,18 @@
   </div>
 
 
-  <!-- ================================================= -->
-  <!-- СТАТУС СОХРАНЕНИЯ -->
-  <!-- ================================================= -->
-
+  <!-- Статус -->
   <div id="syncStatus" class="sync-status hidden">
     Сохранение...
   </div>
 
 
-  <!-- Google Identity Services -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script
+    src="https://accounts.google.com/gsi/client"
+    async
+    defer
+  ></script>
 
-  <!-- Наши скрипты -->
   <script src="drive.js"></script>
   <script src="app.js"></script>
 
