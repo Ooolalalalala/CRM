@@ -1,4 +1,4 @@
-const CACHE_NAME = "personalcrm-v1";
+const CACHE_NAME = "personalcrm-v2";
 
 const APP_FILES = [
   "/CRM/",
@@ -14,9 +14,9 @@ const APP_FILES = [
 /* Установка */
 self.addEventListener("install", event => {
   event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then(cache => cache.addAll(APP_FILES))
+    caches.open(CACHE_NAME).then(cache => {
+      return cache.addAll(APP_FILES);
+    })
   );
 
   self.skipWaiting();
@@ -26,15 +26,13 @@ self.addEventListener("install", event => {
 /* Активация */
 self.addEventListener("activate", event => {
   event.waitUntil(
-    caches
-      .keys()
-      .then(keys =>
-        Promise.all(
-          keys
-            .filter(key => key !== CACHE_NAME)
-            .map(key => caches.delete(key))
-        )
-      )
+    caches.keys().then(keys => {
+      return Promise.all(
+        keys
+          .filter(key => key !== CACHE_NAME)
+          .map(key => caches.delete(key))
+      );
+    })
   );
 
   self.clients.claim();
@@ -51,9 +49,7 @@ self.addEventListener("fetch", event => {
 
   const url = new URL(request.url);
 
-  /*
-    Google API и Google Login не кэшируем.
-  */
+  /* Google API не кэшируем */
   if (
     url.hostname.includes("googleapis.com") ||
     url.hostname.includes("accounts.google.com")
@@ -61,31 +57,30 @@ self.addEventListener("fetch", event => {
     return;
   }
 
+  /*
+    Для файлов приложения сначала пробуем сеть.
+    Если сеть недоступна — берём кэш.
+    Так обновления GitHub Pages появляются сразу.
+  */
   event.respondWith(
-    caches.match(request).then(cached => {
-      if (cached) {
-        return cached;
-      }
-
-      return fetch(request).then(response => {
+    fetch(request)
+      .then(response => {
         if (
-          !response ||
-          response.status !== 200 ||
-          response.type === "opaque"
+          response &&
+          response.status === 200 &&
+          response.type !== "opaque"
         ) {
-          return response;
-        }
+          const copy = response.clone();
 
-        const copy = response.clone();
-
-        caches
-          .open(CACHE_NAME)
-          .then(cache => {
+          caches.open(CACHE_NAME).then(cache => {
             cache.put(request, copy);
           });
+        }
 
         return response;
-      });
-    })
+      })
+      .catch(() => {
+        return caches.match(request);
+      })
   );
 });
