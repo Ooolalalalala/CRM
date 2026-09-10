@@ -1,5 +1,425 @@
 <!DOCTYPE html>
-<html>
-<head><title>PersonalCRM</title></head>
-<body><h1>PersonalCRM</h1></body>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+  <title>PersonalCRM</title>
+
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Личная база контактов и семейных связей">
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+</head>
+
+<body>
+
+  <!-- Экран авторизации -->
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <h1>PersonalCRM</h1>
+      <p>Личная база контактов</p>
+
+      <button id="googleLoginBtn" class="primary-btn">
+        Войти через Google
+      </button>
+
+      <div id="loginStatus" class="status-text"></div>
+    </div>
+  </div>
+
+
+  <!-- Основное приложение -->
+  <div id="app" class="app hidden">
+
+    <!-- Верхняя панель -->
+    <header class="topbar">
+      <div class="topbar-inner">
+
+        <button id="homeBtn" class="app-title">
+          PersonalCRM
+        </button>
+
+        <nav class="desktop-nav">
+          <button data-page="contacts" class="nav-btn active">
+            Контакты
+          </button>
+
+          <button data-page="family" class="nav-btn">
+            Семейное дерево
+          </button>
+        </nav>
+
+        <div class="topbar-actions">
+          <button id="trashBtn" class="icon-btn" title="Корзина">
+            Корзина
+          </button>
+
+          <button id="logoutBtn" class="icon-btn" title="Выйти">
+            Выйти
+          </button>
+        </div>
+
+      </div>
+    </header>
+
+
+    <main class="main-content">
+
+      <!-- ================================================= -->
+      <!-- СТРАНИЦА 1: ВСЕ КОНТАКТЫ -->
+      <!-- ================================================= -->
+
+      <section id="contactsPage" class="page active">
+
+        <div class="page-header">
+          <h1>Контакты</h1>
+
+          <button id="addContactBtn" class="primary-btn">
+            + Добавить контакт
+          </button>
+        </div>
+
+        <div class="contacts-tools">
+
+          <input
+            id="contactSearch"
+            class="search-input"
+            type="search"
+            placeholder="Поиск по имени, телефону, тегам..."
+            autocomplete="off"
+          >
+
+          <select id="categoryFilter" class="filter-select">
+            <option value="">Все категории</option>
+          </select>
+
+        </div>
+
+        <div id="contactsCount" class="contacts-count"></div>
+
+        <div id="contactsList" class="contacts-list">
+          <!-- Контакты создаёт app.js -->
+        </div>
+
+        <div id="emptyContacts" class="empty-state hidden">
+          Контактов пока нет.
+        </div>
+
+      </section>
+
+
+      <!-- ================================================= -->
+      <!-- СТРАНИЦА 2: КАРТОЧКА КОНТАКТА -->
+      <!-- ================================================= -->
+
+      <section id="contactPage" class="page">
+
+        <div class="contact-actions">
+
+          <button id="backToContactsBtn" class="secondary-btn">
+            ← Назад
+          </button>
+
+          <div class="contact-action-buttons">
+            <button id="editContactBtn" class="secondary-btn">
+              Редактировать
+            </button>
+
+            <button id="deleteContactBtn" class="danger-btn">
+              В корзину
+            </button>
+          </div>
+
+        </div>
+
+
+        <article class="contact-profile">
+
+          <!-- Шапка -->
+          <section class="profile-header">
+
+            <div
+              id="profilePhotoContainer"
+              class="profile-photo-container"
+            >
+              <img
+                id="profilePhoto"
+                class="profile-photo"
+                alt="Фото профиля"
+              >
+
+              <div id="profilePhotoPlaceholder" class="profile-photo-placeholder">
+                Нет фото
+              </div>
+            </div>
+
+            <h1 id="profileName"></h1>
+
+            <div id="profileLife" class="profile-life"></div>
+
+            <div id="profileCategory" class="profile-category"></div>
+
+            <div id="profileTags" class="tags-container">
+              <!-- Теги -->
+            </div>
+
+          </section>
+
+
+          <!-- Основные данные -->
+          <section class="profile-section">
+            <h2>Основные данные</h2>
+
+            <div id="basicInfo" class="data-list"></div>
+          </section>
+
+
+          <!-- Контакты -->
+          <section class="profile-section">
+            <h2>Контактные данные</h2>
+
+            <div id="contactInfo" class="data-list"></div>
+          </section>
+
+
+          <!-- Личная информация -->
+          <section class="profile-section">
+            <h2>Личная информация</h2>
+
+            <div id="personalInfo" class="data-list"></div>
+          </section>
+
+
+          <!-- Пользовательские поля -->
+          <section class="profile-section">
+            <h2>Дополнительная информация</h2>
+
+            <div id="customFields" class="data-list"></div>
+          </section>
+
+
+          <!-- Заметки -->
+          <section class="profile-section">
+            <h2>Заметки</h2>
+
+            <div id="notesList" class="notes-list"></div>
+          </section>
+
+
+          <!-- Комментарий -->
+          <section class="profile-section">
+            <h2>Комментарий</h2>
+
+            <div id="contactComment" class="comment-box"></div>
+          </section>
+
+
+          <!-- Связи -->
+          <section class="profile-section">
+            <h2>Связи</h2>
+
+            <div id="relationsList" class="relations-list"></div>
+          </section>
+
+
+          <!-- Фотографии -->
+          <section class="profile-section">
+            <div class="section-title-row">
+              <h2>Фотографии</h2>
+
+              <button id="addPhotoBtn" class="secondary-btn">
+                + Добавить фото
+              </button>
+            </div>
+
+            <input
+              id="photoInput"
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+            >
+
+            <div id="photoGallery" class="photo-gallery"></div>
+          </section>
+
+        </article>
+
+      </section>
+
+
+      <!-- ================================================= -->
+      <!-- СТРАНИЦА 3: СЕМЕЙНОЕ ДЕРЕВО -->
+      <!-- ================================================= -->
+
+      <section id="familyPage" class="page">
+
+        <div class="page-header">
+          <h1>Семейное дерево</h1>
+        </div>
+
+        <div class="family-controls">
+
+          <label for="familyRootSelect">
+            Центральный человек
+          </label>
+
+          <select id="familyRootSelect" class="filter-select">
+            <option value="">Выберите человека</option>
+          </select>
+
+        </div>
+
+        <div id="familyTree" class="family-tree">
+          <!-- Дерево создаёт app.js -->
+        </div>
+
+      </section>
+
+
+      <!-- ================================================= -->
+      <!-- КОРЗИНА -->
+      <!-- ================================================= -->
+
+      <section id="trashPage" class="page">
+
+        <div class="page-header">
+          <h1>Корзина</h1>
+
+          <button id="backFromTrashBtn" class="secondary-btn">
+            ← Назад
+          </button>
+        </div>
+
+        <div id="trashList" class="contacts-list"></div>
+
+        <div id="emptyTrash" class="empty-state hidden">
+          Корзина пуста.
+        </div>
+
+      </section>
+
+    </main>
+
+
+    <!-- Нижняя навигация для телефона -->
+    <nav class="mobile-nav">
+
+      <button data-page="contacts" class="mobile-nav-btn active">
+        Контакты
+      </button>
+
+      <button id="mobileAddContactBtn" class="mobile-nav-btn add">
+        +
+      </button>
+
+      <button data-page="family" class="mobile-nav-btn">
+        Семья
+      </button>
+
+    </nav>
+
+  </div>
+
+
+  <!-- ================================================= -->
+  <!-- ОКНО СОЗДАНИЯ / РЕДАКТИРОВАНИЯ КОНТАКТА -->
+  <!-- ================================================= -->
+
+  <div id="contactModal" class="modal hidden">
+
+    <div class="modal-backdrop"></div>
+
+    <div class="modal-window">
+
+      <div class="modal-header">
+        <h2 id="contactModalTitle">
+          Новый контакт
+        </h2>
+
+        <button id="closeContactModalBtn" class="close-btn">
+          ×
+        </button>
+      </div>
+
+      <form id="contactForm" class="contact-form">
+
+        <!-- Содержимое формы создаёт app.js -->
+        <div id="contactFormContent"></div>
+
+        <div class="form-actions">
+          <button
+            type="button"
+            id="cancelContactBtn"
+            class="secondary-btn"
+          >
+            Отмена
+          </button>
+
+          <button
+            type="submit"
+            class="primary-btn"
+          >
+            Сохранить
+          </button>
+        </div>
+
+      </form>
+
+    </div>
+
+  </div>
+
+
+  <!-- ================================================= -->
+  <!-- ПРОСМОТР ФОТО -->
+  <!-- ================================================= -->
+
+  <div id="photoViewer" class="photo-viewer hidden">
+
+    <button id="closePhotoViewerBtn" class="photo-viewer-close">
+      ×
+    </button>
+
+    <button id="previousPhotoBtn" class="photo-nav previous">
+      ‹
+    </button>
+
+    <img
+      id="photoViewerImage"
+      class="photo-viewer-image"
+      alt="Фотография"
+    >
+
+    <button id="nextPhotoBtn" class="photo-nav next">
+      ›
+    </button>
+
+    <div id="photoViewerCounter" class="photo-counter"></div>
+
+  </div>
+
+
+  <!-- ================================================= -->
+  <!-- СТАТУС СОХРАНЕНИЯ -->
+  <!-- ================================================= -->
+
+  <div id="syncStatus" class="sync-status hidden">
+    Сохранение...
+  </div>
+
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- Наши скрипты -->
+  <script src="drive.js"></script>
+  <script src="app.js"></script>
+
+</body>
 </html>
